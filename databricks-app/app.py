@@ -1,15 +1,21 @@
+import os
+import json
+import asyncio
+from datetime import datetime
+from typing import Dict, Any, Optional
+from enum import Enum
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, AsyncGenerator, List, Dict, Any
-from enum import Enum
-import json
-import os
-import mlflow
-import asyncio
 import uvicorn
+import openai
+from openai import AsyncOpenAI
+import mlflow
+from llm_utils import load_email_prompt, core_generate_email_logic, stream_generate_email_logic
+from quality_metrics import run_quality_assessment, get_quality_metrics_summary
+
 
 # Import from the llm_utils module
 from llm_utils import (
@@ -17,6 +23,7 @@ from llm_utils import (
     set_app_version,
     openai_client,
     stream_generate_email_logic,
+    load_email_prompt,
 )
 
 # Import quality metrics functionality
@@ -92,6 +99,40 @@ class QualityMetricsResponse(BaseModel):
 
 class GuidelinesResponse(BaseModel):
     guidelines: Dict[str, str]
+
+
+class PromptEvaluationRequest(BaseModel):
+    baseline_prompt: str
+    new_prompt: str
+    customer_data: Optional[Dict[str, Any]] = None
+
+
+class PromptEvaluationResponse(BaseModel):
+    baseline_score: Optional[float] = None
+    new_score: Optional[float] = None
+    improvement: Optional[str] = None
+    run_id: Optional[str] = None
+    baseline_run_id: Optional[str] = None
+    error: Optional[str] = None
+
+
+class BaselinePromptResponse(BaseModel):
+    prompt: str
+    version: Optional[str] = None
+    source: str  # 'registry' or 'fallback'
+    error: Optional[str] = None
+
+
+class PromptTestRequest(BaseModel):
+    prompt: str
+    customer_data: Optional[Dict[str, Any]] = None
+
+
+class PromptTestResponse(BaseModel):
+    score: Optional[float] = None
+    metrics: Optional[Dict[str, Dict[str, Any]]] = None
+    run_id: Optional[str] = None
+    error: Optional[str] = None
 
 
 app = FastAPI()
@@ -222,6 +263,20 @@ async def get_customer_by_name(company_name: str):
     raise HTTPException(status_code=404, detail=f"Company '{company_name}' not found")
 
 
+@app.get("/api/sample-customers")
+async def get_sample_customers(limit: int = 3):
+    """Get sample customer data for testing prompt evaluation"""
+    if limit > len(CUSTOMER_DATA):
+        limit = len(CUSTOMER_DATA)
+    
+    sample_customers = CUSTOMER_DATA[:limit]
+    return {
+        "customers": sample_customers,
+        "total_available": len(CUSTOMER_DATA),
+        "sample_size": limit
+    }
+
+
 @app.post("/api/feedback", response_model=FeedbackResponse)
 async def submit_feedback(feedback: FeedbackRequest):
     """
@@ -291,24 +346,225 @@ async def get_quality_guidelines():
 
 @app.get("/api/quality-assessment/health")
 async def quality_assessment_health():
-    """
-    Health check for quality assessment functionality
-    """
+    """Health check for quality assessment functionality"""
     try:
-        # Test if we can access the guidelines
-        guidelines_count = len(QUALITY_GUIDELINES)
-        
-        return {
-            "status": "healthy",
-            "guidelines_loaded": True,
-            "guidelines_count": guidelines_count,
-            "available_metrics": list(QUALITY_GUIDELINES.keys())
-        }
+        # Test basic functionality
+        test_guidelines = {"test": "Test guideline"}
+        result = await run_quality_assessment_api(QualityAssessmentRequest(
+            max_traces=1,
+            custom_guidelines=test_guidelines
+        ))
+        return {"status": "healthy", "message": "Quality assessment is working"}
     except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e)
-        }
+        return {"status": "unhealthy", "message": str(e)}
+
+
+@app.post("/api/evaluate-prompt", response_model=PromptEvaluationResponse)
+async def evaluate_prompt(request: PromptEvaluationRequest):
+    """Evaluate a new prompt against a baseline prompt using quality assessment framework"""
+    try:
+        from llm_utils import create_custom_email_generator
+        from quality_metrics import create_guidelines_scorers, evaluate, get_quality_metrics_summary
+        
+        # Ensure prompts are strings
+        baseline_prompt = str(request.baseline_prompt) if request.baseline_prompt else ""
+        new_prompt = str(request.new_prompt) if request.new_prompt else ""
+        
+        # Get some sample customer data for evaluation
+        if request.customer_data:
+            sample_data = [request.customer_data]
+        else:
+            # Use first few customers from our data as test cases
+            sample_data = CUSTOMER_DATA[:3] if len(CUSTOMER_DATA) >= 3 else CUSTOMER_DATA
+        
+        if not sample_data:
+            raise ValueError("No customer data available for evaluation")
+        
+        # Create custom generators for baseline and new prompt
+        baseline_generator = create_custom_email_generator(baseline_prompt)
+        new_generator = create_custom_email_generator(new_prompt)
+        
+        # Create prediction functions for evaluation
+        def baseline_predict_fn(inputs):
+            """Prediction function using baseline prompt"""
+            result = baseline_generator(inputs.get("inputs", inputs))
+            return {
+                "body": result.get("body", ""),
+                "subject_line": result.get("subject_line", "")
+            }
+        
+        def new_predict_fn(inputs):
+            """Prediction function using new prompt"""
+            result = new_generator(inputs.get("inputs", inputs))
+            return {
+                "body": result.get("body", ""),
+                "subject_line": result.get("subject_line", "")
+            }
+        
+        # Format data for evaluation
+        formatted_data = [{"inputs": {"inputs": customer}} for customer in sample_data]
+        
+        # Get quality guidelines scorers
+        scorers = create_guidelines_scorers()
+        
+        # Run evaluation for baseline prompt
+        baseline_results = evaluate(
+            data=formatted_data,
+            predict_fn=baseline_predict_fn,
+            scorers=scorers
+        )
+        
+        # Format data for evaluation
+        formatted_data = [{"inputs": {"inputs": customer}} for customer in sample_data]
+
+        # Run evaluation for new prompt
+        new_results = evaluate(
+            data=formatted_data,
+            predict_fn=new_predict_fn,
+            scorers=scorers
+        )
+        
+        # Get summaries using the proper function
+        baseline_summary = get_quality_metrics_summary(baseline_results)
+        new_summary = get_quality_metrics_summary(new_results)
+        
+        # Calculate scores
+        baseline_score = baseline_summary.get("overall_score", 0.0)
+        new_score = new_summary.get("overall_score", 0.0)
+        
+        # Determine improvement
+        score_diff = new_score - baseline_score
+        if score_diff > 0.1:
+            improvement = "significant_improvement"
+        elif score_diff > 0.05:
+            improvement = "moderate_improvement"
+        elif score_diff > 0:
+            improvement = "slight_improvement"
+        elif score_diff < -0.1:
+            improvement = "significant_decline"
+        elif score_diff < -0.05:
+            improvement = "moderate_decline"
+        elif score_diff < 0:
+            improvement = "slight_decline"
+        else:
+            improvement = "no_change"
+        
+        # Get run_id from the evaluation results
+        run_id = getattr(new_results, 'run_id', None)
+        baseline_run_id = getattr(baseline_results, 'run_id', None)
+        
+        return PromptEvaluationResponse(
+            baseline_score=baseline_score,
+            new_score=new_score,
+            improvement=improvement,
+            run_id=run_id,
+            baseline_run_id=baseline_run_id
+        )
+        
+    except Exception as e:
+        return PromptEvaluationResponse(
+            error=f"Error evaluating prompts: {str(e)}"
+        )
+
+
+@app.get("/api/baseline-prompt", response_model=BaselinePromptResponse)
+async def get_baseline_prompt():
+    """Fetch the baseline prompt from MLflow registry"""
+    try:
+        # Load the prompt from the registry
+        prompt_template, prompt_version = load_email_prompt()
+        
+        # Ensure the prompt is properly formatted as a string
+        if isinstance(prompt_template, str):
+            # If the prompt appears to be a JSON string, parse it
+            if prompt_template.startswith('"') and prompt_template.endswith('"'):
+                import json
+                try:
+                    prompt_template = json.loads(prompt_template)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, just clean up the escaping
+                    prompt_template = prompt_template.replace('\\n', '\n').replace('\\"', '"')
+                    if prompt_template.startswith('"') and prompt_template.endswith('"'):
+                        prompt_template = prompt_template[1:-1]
+            else:
+                # Clean up any extra escaping that might have occurred
+                prompt_template = prompt_template.replace('\\n', '\n').replace('\\"', '"')
+        
+        return BaselinePromptResponse(
+            prompt=prompt_template,
+            version=str(prompt_version) if prompt_version is not None else None,
+            source="registry"
+        )
+        
+    except Exception as e:
+        return BaselinePromptResponse(
+            prompt="",  # Empty prompt on error
+            version=None,
+            source="fallback",
+            error=f"Failed to load prompt from registry: {str(e)}"
+        )
+
+
+@app.post("/api/test-prompt", response_model=PromptTestResponse)
+async def test_single_prompt(request: PromptTestRequest):
+    """Test a single prompt and get its quality score using quality assessment framework"""
+    try:
+        from llm_utils import create_custom_email_generator
+        from quality_metrics import create_guidelines_scorers, evaluate, get_quality_metrics_summary
+        
+        # Get sample customer data for evaluation
+        if request.customer_data:
+            sample_data = [request.customer_data]
+        else:
+            # Use first few customers from our data as test cases
+            sample_data = CUSTOMER_DATA[:3] if len(CUSTOMER_DATA) >= 3 else CUSTOMER_DATA
+        
+        if not sample_data:
+            raise ValueError("No customer data available for evaluation")
+        
+        # Create custom generator for the test prompt
+        test_generator = create_custom_email_generator(request.prompt)
+        
+        # Create prediction function for evaluation
+        def test_predict_fn(inputs):
+            """Prediction function using test prompt"""
+            result = test_generator(inputs.get("inputs", inputs))
+            return {
+                "body": result.get("body", ""),
+                "subject_line": result.get("subject_line", "")
+            }
+        
+        # Format data for evaluation
+        formatted_data = [{"inputs": {"inputs": customer}} for customer in sample_data]
+        
+        # Get quality guidelines scorers
+        scorers = create_guidelines_scorers()
+        
+        # Run evaluation for the test prompt
+        results = evaluate(
+            data=formatted_data,
+            predict_fn=test_predict_fn,
+            scorers=scorers
+        )
+        
+        # Get summary using the proper function
+        summary = get_quality_metrics_summary(results)
+        
+        # Extract scores
+        score = summary.get("overall_score", 0.0)
+        metrics = summary.get("metrics", {})
+        run_id = getattr(results, 'run_id', None)
+        
+        return PromptTestResponse(
+            score=score,
+            metrics=metrics,
+            run_id=run_id
+        )
+        
+    except Exception as e:
+        return PromptTestResponse(
+            error=f"Error testing prompt: {str(e)}"
+        )
 
 
 # Mount static files - this must be after all API routes

@@ -55,6 +55,95 @@ function App() {
   const [assessmentError, setAssessmentError] = useState(null);
   const [mlflowConfig, setMlflowConfig] = useState(null);
 
+  // Prompt comparison state
+  const [baselinePrompt, setBaselinePrompt] = useState(`You are an expert sales communication assistant for CloudFlow Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
+
+## INPUT DATA
+You will be provided with a JSON object containing:
+- Account information
+- Recent activity data (meetings, product usage, support tickets)
+- Sales representative details
+
+## EMAIL REQUIREMENTS
+Generate an email that follows these guidelines:
+1. SUBJECT LINE:
+   - Concise and specific to the most important update or follow-up point
+   - Include the company name if appropriate
+2. GREETING:
+   - Address the main contact by first name
+   - Use a professional but friendly opening`);
+  
+  const [newPrompt, setNewPrompt] = useState(`You are an expert sales communication assistant for CloudFlow Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
+
+## CRITICAL: NO FABRICATION RULE
+**ABSOLUTE REQUIREMENT**: You must ONLY reference information that is explicitly provided in the customer data. DO NOT:
+- Invent or mention any CloudFlow features, services, or capabilities not listed in the data
+- Fabricate any details about meetings, tickets, or usage that aren't provided
+- Add any product recommendations beyond what's specifically mentioned in the customer data
+- Create any information not directly sourced from the input JSON
+
+**AUTOMATIC FAILURE** occurs if you mention anything not explicitly provided in the data.
+
+## INPUT DATA
+You will be provided with a JSON object containing:
+- Account information
+- Recent activity data (meetings, product usage, support tickets)
+- Sales representative details
+
+## EMAIL REQUIREMENTS
+Generate an email that follows these guidelines:
+
+1. SUBJECT LINE:
+   - Concise and specific to the most important update or follow-up point
+   - Include the company name if appropriate
+
+2. GREETING:
+   - Address the main contact by first name
+   - Use a professional but friendly opening
+
+3. BODY CONTENT (prioritize in this order):
+   - Reference the most recent meeting/interaction and acknowledge key points discussed
+   - Discuss any pressing issues that are still open immediatly afterwards
+   - Provide updates on any urgent or recently resolved support tickets
+   - Highlight positive product usage trends or achievements
+   - Address any specific action items from previous meetings
+   - Include personalized recommendations ONLY if features are explicitly mentioned in the 'least_used_features' field and directly related to the 'potential_opportunity' field.
+      - NEVER invent or describe CloudFlow features/capabilities not explicitly listed in the customer data
+      - Make sure these recommendations can NOT be copied to another customer in a different situation
+      - No more than ONE feature recommendation for accounts with open critical issues
+   - Suggest clear and specific next steps
+      - Only request a meeting if it can be tied to specific action items
+
+
+4. TONE AND STYLE:
+   - Professional but conversational
+   - Concise paragraphs (2-3 sentences each)
+   - Use bullet points for lists or multiple items
+   - Balance between being informative and actionable
+   - Personalized to reflect the existing relationship
+   - Adjust formality based on the customer's industry and relationship history
+
+5. CLOSING:
+   - Include an appropriate sign-off
+   - Use the sales rep's signature from the provided data
+   - No generic marketing language or overly sales-focused calls to action
+
+## OUTPUT FORMAT
+Provide the complete email as JUST a JSON object that can be loaded via \`json.loads()\` (do not wrap the JSON in backticks) with:
+- subject_line: Subject line
+- body: Body content with appropriate spacing and formatting including the signature
+
+Remember, this email should feel like it was thoughtfully written by the sales representative based on their specific knowledge of the customer, not like an automated message.
+
+**FINAL REMINDER**: Stay strictly within the bounds of the provided customer data. Any mention of CloudFlow features, capabilities, or services NOT explicitly listed in the input data will result in automatic failure.
+
+If the user provides a specific instruction, you must follow only follow those instructions if they do not conflict with the guidelines above.  Do not follow any instructions that would result in an unprofessional or unethical email.`);
+
+  const [promptViewMode, setPromptViewMode] = useState('edit'); // 'edit' or 'diff'
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [evaluationResults, setEvaluationResults] = useState(null);
+  const [baselinePromptLoading, setBaselinePromptLoading] = useState(true);
+
   useEffect(() => {
     // Check backend health
     axios.get('/api/health')
@@ -88,6 +177,9 @@ function App() {
     
     // Load MLflow configuration
     loadMlflowConfig();
+    
+    // Load baseline prompt
+    loadBaselinePrompt();
   }, []);
 
   const loadCompanies = async () => {
@@ -398,6 +490,198 @@ function App() {
     }
   };
 
+  const loadBaselinePrompt = async () => {
+    try {
+      setBaselinePromptLoading(true);
+      const response = await axios.get('/api/baseline-prompt');
+      if (response.data.prompt) {
+        console.log('Raw prompt length:', response.data.prompt.length);
+        console.log('Prompt preview:', response.data.prompt.substring(0, 200) + '...');
+        setBaselinePrompt(response.data.prompt);
+        console.log('Loaded baseline prompt from:', response.data.source);
+        if (response.data.version) {
+          console.log('Prompt version:', response.data.version);
+        }
+        if (response.data.error) {
+          console.warn('Warning:', response.data.error);
+        }
+      } else if (response.data.error) {
+        console.error("Error loading baseline prompt:", response.data.error);
+      }
+    } catch (err) {
+      console.error("Error loading baseline prompt:", err);
+      // Keep the default prompt if loading fails
+    } finally {
+      setBaselinePromptLoading(false);
+    }
+  };
+
+  const handleEvaluateNewPrompt = async () => {
+    setEvaluationLoading(true);
+    setEvaluationResults(null);
+    
+    try {
+      const response = await axios.post('/api/evaluate-prompt', {
+        baseline_prompt: baselinePrompt,
+        new_prompt: newPrompt,
+        customer_data: customerData || {}
+      });
+      
+      setEvaluationResults(response.data);
+    } catch (err) {
+      console.error("Error evaluating prompt:", err);
+      setEvaluationResults({ error: err.response?.data?.detail || "Failed to evaluate prompt" });
+    } finally {
+      setEvaluationLoading(false);
+    }
+  };
+
+  // Function to generate proper diff between two texts
+  const generateDiff = (oldText, newText) => {
+    const oldLines = oldText.split('\n');
+    const newLines = newText.split('\n');
+    const diff = [];
+    
+    let i = 0, j = 0;
+    
+    while (i < oldLines.length || j < newLines.length) {
+      if (i >= oldLines.length) {
+        // Only new lines remain
+        diff.push({ type: 'add', line: newLines[j], lineNumber: j + 1 });
+        j++;
+      } else if (j >= newLines.length) {
+        // Only old lines remain
+        diff.push({ type: 'del', line: oldLines[i], lineNumber: i + 1 });
+        i++;
+      } else if (oldLines[i] === newLines[j]) {
+        // Lines are identical
+        diff.push({ type: 'unchanged', line: oldLines[i], lineNumber: i + 1 });
+        i++;
+        j++;
+      } else {
+        // Lines are different - look ahead to find the best match
+        let foundMatch = false;
+        
+        // Look ahead in new lines for a match with current old line
+        for (let k = j + 1; k < Math.min(j + 5, newLines.length); k++) {
+          if (oldLines[i] === newLines[k]) {
+            // Found a match ahead, mark intermediate lines as additions
+            for (let m = j; m < k; m++) {
+              diff.push({ type: 'add', line: newLines[m], lineNumber: m + 1 });
+            }
+            j = k;
+            foundMatch = true;
+            break;
+          }
+        }
+        
+        // Look ahead in old lines for a match with current new line
+        if (!foundMatch) {
+          for (let k = i + 1; k < Math.min(i + 5, oldLines.length); k++) {
+            if (newLines[j] === oldLines[k]) {
+              // Found a match ahead, mark intermediate lines as deletions
+              for (let m = i; m < k; m++) {
+                diff.push({ type: 'del', line: oldLines[m], lineNumber: m + 1 });
+              }
+              i = k;
+              foundMatch = true;
+              break;
+            }
+          }
+        }
+        
+        // If no match found, treat as replacement
+        if (!foundMatch) {
+          diff.push({ type: 'del', line: oldLines[i], lineNumber: i + 1 });
+          diff.push({ type: 'add', line: newLines[j], lineNumber: j + 1 });
+          i++;
+          j++;
+        }
+      }
+    }
+    
+    return diff;
+  };
+
+  const getImprovementColor = (improvement) => {
+    switch (improvement) {
+      case 'significant_improvement':
+        return '#28a745'; // Green for significant improvement
+      case 'moderate_improvement':
+        return '#F36F21'; // GSK orange for moderate improvement
+      case 'slight_improvement':
+        return '#F25D18'; // GSK light orange for slight improvement
+      case 'no_change':
+        return '#72635C'; // GSK gray for no change
+      case 'slight_decline':
+        return '#F9EC6E'; // GSK yellow for slight decline
+      case 'moderate_decline':
+        return '#E81E23'; // GSK red for moderate decline
+      case 'significant_decline':
+        return '#dc3545'; // Red for significant decline
+      default:
+        return '#72635C';
+    }
+  };
+
+  const getImprovementIcon = (improvement) => {
+    switch (improvement) {
+      case 'significant_improvement':
+        return '↑';
+      case 'moderate_improvement':
+        return '↗';
+      case 'slight_improvement':
+        return '↗';
+      case 'no_change':
+        return '−';
+      case 'slight_decline':
+        return '↘';
+      case 'moderate_decline':
+        return '↘';
+      case 'significant_decline':
+        return '↓';
+      default:
+        return '?';
+    }
+  };
+
+  const getImprovementLabel = (improvement) => {
+    switch (improvement) {
+      case 'significant_improvement':
+        return 'Significant Improvement';
+      case 'moderate_improvement':
+        return 'Moderate Improvement';
+      case 'slight_improvement':
+        return 'Slight Improvement';
+      case 'no_change':
+        return 'No Change';
+      case 'slight_decline':
+        return 'Slight Decline';
+      case 'moderate_decline':
+        return 'Moderate Decline';
+      case 'significant_decline':
+        return 'Significant Decline';
+      default:
+        return 'Unknown';
+    }
+  };
+
+  const getMlflowLink = (runId, baselineRunId) => {
+    if (!runId) return null;
+    
+    const baseUrl = 'https://adb-984752964297111.11.azuredatabricks.net/ml/experiments/2288977791043869/evaluation-runs';
+    const params = new URLSearchParams({
+      selectedRunUuid: runId,
+      o: '984752964297111'
+    });
+    
+    if (baselineRunId) {
+      params.append('compareToRunUuid', baselineRunId);
+    }
+    
+    return `${baseUrl}?${params.toString()}`;
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -429,17 +713,8 @@ function App() {
                     className={`nav-item ${activeTab === 'demo-overview' ? 'active' : ''}`}
                     onClick={() => setActiveTab('demo-overview')}
                   >
-                    <span className="nav-icon">▶️</span>
-                    Demo Overview
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    className={`nav-item ${activeTab === 'observe-tracing' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('observe-tracing')}
-                  >
-                    <span className="nav-icon">🧪</span>
-                    Observe with tracing
+                    <span className="nav-icon">📧</span>
+                    Generate Email
                   </button>
                 </li>
                 <li>
@@ -453,11 +728,11 @@ function App() {
                 </li>
                 <li>
                   <button 
-                    className={`nav-item ${activeTab === 'find-fix-issues' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('find-fix-issues')}
+                    className={`nav-item ${activeTab === 'improve-quality' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('improve-quality')}
                   >
-                    <span className="nav-icon">📈</span>
-                    Find & fix quality issues
+                    <span className="nav-icon">🧪</span>
+                    Improve Quality
                   </button>
                 </li>
                 <li>
@@ -840,6 +1115,179 @@ function App() {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+            
+            {activeTab === 'improve-quality' && (
+              <div className="improve-quality-container">
+                <div className="improve-quality-header">
+                  <h1>Improve Quality</h1>
+                  <p>Compare different prompt versions and evaluate their performance using MLflow Evaluation.</p>
+                  <p>The MLflow Prompt Registry provides version control for your prompts, enabling systematic performance comparison between different prompt iterations.</p>
+                </div>
+                
+                <div className="prompt-comparison-section">
+                  <div className="prompt-comparison-header">
+                    <h2>Prompt Quality Evaluation</h2>
+                    <p>Test your new prompt against quality criteria to see how it performs.</p>
+                  </div>
+                  
+                  <div className="prompt-comparison-grid">
+                    {/* Baseline Prompt */}
+                    <div className="prompt-card baseline">
+                      <div className="prompt-header">
+                        <h3>Baseline Prompt</h3>
+                        <span className="prompt-label baseline">Baseline</span>
+                      </div>
+                      <div className="prompt-content">
+                        <label>Prompt Template</label>
+                        {baselinePromptLoading ? (
+                          <div className="prompt-loading">
+                            <p>Loading baseline prompt from MLflow registry...</p>
+                          </div>
+                        ) : (
+                          <textarea
+                            value={baselinePrompt}
+                            onChange={(e) => setBaselinePrompt(e.target.value)}
+                            rows={20}
+                            className="prompt-textarea"
+                            placeholder="Enter your baseline prompt here..."
+                            style={{ minHeight: '400px' }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* New Prompt */}
+                    <div className="prompt-card new">
+                      <div className="prompt-header">
+                        <h3>New Prompt</h3>
+                        <div className="prompt-actions">
+                          <button 
+                            className={`view-mode-btn ${promptViewMode === 'diff' ? 'active' : ''}`}
+                            onClick={() => setPromptViewMode(promptViewMode === 'edit' ? 'diff' : 'edit')}
+                          >
+                            {promptViewMode === 'edit' ? '👁️ View differences' : '← Back to edit'}
+                          </button>
+                        </div>
+                      </div>
+                      <div className="prompt-content">
+                        <div className="prompt-content-header">
+                          <label>Prompt Template</label>
+                          <span className="prompt-mode-badge">
+                            {promptViewMode === 'diff' ? 'Diff View' : 'Edit Mode'}
+                          </span>
+                        </div>
+                        {promptViewMode === 'edit' ? (
+                          <textarea
+                            value={newPrompt}
+                            onChange={(e) => setNewPrompt(e.target.value)}
+                            rows={20}
+                            className="prompt-textarea"
+                            placeholder="Enter your new prompt here..."
+                            style={{ minHeight: '400px' }}
+                          />
+                        ) : (
+                          <div className="diff-view">
+                            <div className="diff-header">
+                              <span className="diff-label">Changes from baseline:</span>
+                            </div>
+                            <div className="diff-content">
+                              <div className="diff-text">
+                                {generateDiff(baselinePrompt, newPrompt).map((diffItem, index) => {
+                                  if (diffItem.type === 'unchanged') {
+                                    return <div key={index} className="diff-unchanged">{diffItem.line}</div>;
+                                  } else if (diffItem.type === 'del') {
+                                    return <div key={index} className="diff-del">- {diffItem.line}</div>;
+                                  } else if (diffItem.type === 'add') {
+                                    return <div key={index} className="diff-add">+ {diffItem.line}</div>;
+                                  }
+                                  return null;
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Evaluation Button */}
+                  <div className="evaluation-section">
+                    <button 
+                      className="evaluate-prompt-btn"
+                      onClick={handleEvaluateNewPrompt}
+                      disabled={evaluationLoading}
+                    >
+                      {evaluationLoading ? '🔄 Evaluating new prompt (this may take a minute)...' : '► Evaluate New Prompt'}
+                    </button>
+                  </div>
+                  
+                  {/* Evaluation Results */}
+                  {evaluationResults && (
+                    <div className="evaluation-results">
+                      <h3>Evaluation Results</h3>
+                      {evaluationResults.error ? (
+                        <div className="evaluation-error">
+                          <strong>Error:</strong> {evaluationResults.error}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="results-grid">
+                            <div className={`result-card improvement-${evaluationResults.improvement?.replace('_', '-')}`} style={{ borderLeft: `4px solid ${getImprovementColor(evaluationResults.improvement)}` }}>
+                              <div className="result-icon">{getImprovementIcon(evaluationResults.improvement)}</div>
+                              <div className="result-value" style={{ color: getImprovementColor(evaluationResults.improvement) }}>
+                                {getImprovementLabel(evaluationResults.improvement)}
+                              </div>
+                              <div className="result-label">Improvement Level</div>
+                            </div>
+                            
+                            <div className="result-card">
+                              <div className="result-icon">B</div>
+                              <div className="result-value" style={{ color: '#F36F21' }}>
+                                {evaluationResults.baseline_score?.toFixed(2) || 'N/A'}
+                              </div>
+                              <div className="result-label">Baseline Score</div>
+                            </div>
+                            
+                            <div className="result-card">
+                              <div className="result-icon">N</div>
+                              <div className="result-value" style={{ color: '#F36F21' }}>
+                                {evaluationResults.new_score?.toFixed(2) || 'N/A'}
+                              </div>
+                              <div className="result-label">New Score</div>
+                            </div>
+                            
+                            <div className="result-card">
+                              <div className="result-icon">Δ</div>
+                              <div className="result-value" style={{ 
+                                color: evaluationResults.new_score > evaluationResults.baseline_score ? '#28a745' : 
+                                       evaluationResults.new_score < evaluationResults.baseline_score ? '#E81E23' : '#72635C'
+                              }}>
+                                {evaluationResults.new_score && evaluationResults.baseline_score ? 
+                                  ((evaluationResults.new_score - evaluationResults.baseline_score) * 100).toFixed(1) + '%' : 'N/A'}
+                              </div>
+                              <div className="result-label">Score Change</div>
+                            </div>
+                          </div>
+                          
+                          {evaluationResults.run_id && (
+                            <div className="mlflow-link-section">
+                              <a 
+                                href={getMlflowLink(evaluationResults.run_id, evaluationResults.baseline_run_id)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="mlflow-link-btn"
+                              >
+                                View in MLflow
+                              </a>
+                            </div>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
             
@@ -1340,7 +1788,7 @@ function App() {
               </div>
             )}
             
-            {!['business-kpis', 'quality-metrics', 'demo-overview'].includes(activeTab) && (
+            {!['business-kpis', 'quality-metrics', 'demo-overview', 'improve-quality', 'production-monitoring', 'human-review', 'mlflow-docs', 'mlflow-website', 'mlflow-quickstart'].includes(activeTab) && (
               <div className="default-content">
                 <div className="default-header">
                   <h1>MLflow Demo</h1>
