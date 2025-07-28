@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from typing import Optional, AsyncGenerator
+from typing import Optional, AsyncGenerator, List, Dict, Any
 from enum import Enum
 import json
 import os
@@ -17,6 +17,13 @@ from llm_utils import (
     set_app_version,
     openai_client,
     stream_generate_email_logic,
+)
+
+# Import quality metrics functionality
+from quality_metrics import (
+    run_quality_assessment,
+    get_quality_metrics_summary,
+    QUALITY_GUIDELINES
 )
 
 
@@ -66,6 +73,25 @@ class FeedbackRequest(BaseModel):
 class FeedbackResponse(BaseModel):
     success: bool
     message: str
+
+
+class QualityAssessmentRequest(BaseModel):
+    max_traces: Optional[int] = 5
+    custom_guidelines: Optional[Dict[str, str]] = None
+
+
+class QualityMetricsResponse(BaseModel):
+    overall_score: float
+    metrics: Dict[str, Dict[str, Any]]
+    total_evaluations: int
+    passed_evaluations: int
+    assessment_type: str
+    timestamp: str
+    run_id: Optional[str] = None
+
+
+class GuidelinesResponse(BaseModel):
+    guidelines: Dict[str, str]
 
 
 app = FastAPI()
@@ -220,6 +246,69 @@ async def submit_feedback(feedback: FeedbackRequest):
         return FeedbackResponse(
             success=False, message=f"Error submitting feedback: {str(e)}"
         )
+
+
+@app.post("/api/quality-assessment", response_model=QualityMetricsResponse)
+async def run_quality_assessment_api(request: QualityAssessmentRequest):
+    """
+    Run quality assessment on recent production traces with optional custom guidelines
+    """
+    try:
+        import datetime
+        
+        # Run assessment on recent traces with custom guidelines if provided
+        results = run_quality_assessment(
+            max_traces=request.max_traces,
+            custom_guidelines=request.custom_guidelines
+        )
+        assessment_type = "production_traces"
+        
+        # Get summary of results
+        summary = get_quality_metrics_summary(results)
+        summary["assessment_type"] = assessment_type
+        summary["timestamp"] = datetime.datetime.now().isoformat()
+        
+        # Add run_id to response
+        if hasattr(results, 'run_id'):
+            summary["run_id"] = results.run_id
+        
+        return QualityMetricsResponse(**summary)
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error running quality assessment: {str(e)}"
+        )
+
+
+@app.get("/api/quality-guidelines", response_model=GuidelinesResponse)
+async def get_quality_guidelines():
+    """
+    Get the current quality assessment guidelines
+    """
+    return GuidelinesResponse(guidelines=QUALITY_GUIDELINES)
+
+
+@app.get("/api/quality-assessment/health")
+async def quality_assessment_health():
+    """
+    Health check for quality assessment functionality
+    """
+    try:
+        # Test if we can access the guidelines
+        guidelines_count = len(QUALITY_GUIDELINES)
+        
+        return {
+            "status": "healthy",
+            "guidelines_loaded": True,
+            "guidelines_count": guidelines_count,
+            "available_metrics": list(QUALITY_GUIDELINES.keys())
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
 
 
 # Mount static files - this must be after all API routes

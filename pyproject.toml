@@ -10,16 +10,17 @@ dependencies = [
     "databricks-agents",
     "databricks-sdk[openai]>=0.54.0",
     "fastapi>=0.115.12",
+    "h11>=0.14.0",
     "mlflow",
-    "mlflow-skinny",
     "openai>=1.82.0",
     "pydantic>=2",
+    "python-dotenv>=1.1.0",
     "requests>=2.32.3",
     "starlette>=0.46.2",
+    "typing-extensions>=4.0.0",
     "uvicorn[standard]>=0.34.3",
 ]
 
 [tool.uv.sources]
 databricks-agents = { url = "https://ml-team-public-read.s3.us-west-2.amazonaws.com/wheels/databricks-agents/staging/databricks_agents-1.0.0rc3-py3-none-any.whl" }
 mlflow = { git = "https://github.com/mlflow/mlflow.git", rev = "master" }
-mlflow-skinny = { git = "https://github.com/mlflow/mlflow.git", subdirectory = "skinny", rev = "master" }
