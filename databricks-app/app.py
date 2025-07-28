@@ -34,21 +34,21 @@ from quality_metrics import (
 )
 
 
-# Load customer data from input_data.jsonl
+# Load customer data from gsk_10_accounts.jsonl
 def load_customer_data():
     customers = []
     try:
-        with open("input_data.jsonl", "r") as f:
+        with open("gsk_10_accounts.jsonl", "r") as f:
             for line in f:
                 customers.append(json.loads(line))
     except FileNotFoundError:
         # Try alternative path if run from different directory
         try:
-            with open("input_data.jsonl", "r") as f:
+            with open("../gsk_10_accounts.jsonl", "r") as f:
                 for line in f:
                     customers.append(json.loads(line))
         except FileNotFoundError:
-            print("Warning: input_data.jsonl not found")
+            print("Warning: gsk_10_accounts.jsonl not found")
     return customers
 
 

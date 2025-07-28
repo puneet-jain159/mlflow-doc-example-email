@@ -37,7 +37,7 @@ function App() {
 • Meeting discussions must be summarized with the exact same sentiment and priority as presented in the data
 • Support ticket information must include correct ticket IDs, status, and resolution details when available
 • All product usage statistics must be presented with the same metrics provided in the data
-• No references to CloudFlow features, services, or offerings unless specifically mentioned in the customer data
+• No references to GSK features, services, or offerings unless specifically mentioned in the customer data
 • AUTOMATIC FAIL if any information is mentioned that is not explicitly provided in the data`,
     personalized: `The response demonstrates clear personalization based on the provided_info based on these rules:
 
@@ -56,7 +56,7 @@ function App() {
   const [mlflowConfig, setMlflowConfig] = useState(null);
 
   // Prompt comparison state
-  const [baselinePrompt, setBaselinePrompt] = useState(`You are an expert sales communication assistant for CloudFlow Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
+  const [baselinePrompt, setBaselinePrompt] = useState(`You are an expert sales communication assistant for GSK Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
 
 ## INPUT DATA
 You will be provided with a JSON object containing:
@@ -73,11 +73,11 @@ Generate an email that follows these guidelines:
    - Address the main contact by first name
    - Use a professional but friendly opening`);
   
-  const [newPrompt, setNewPrompt] = useState(`You are an expert sales communication assistant for CloudFlow Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
+  const [newPrompt, setNewPrompt] = useState(`You are an expert sales communication assistant for GSK Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
 
 ## CRITICAL: NO FABRICATION RULE
 **ABSOLUTE REQUIREMENT**: You must ONLY reference information that is explicitly provided in the customer data. DO NOT:
-- Invent or mention any CloudFlow features, services, or capabilities not listed in the data
+- Invent or mention any GSK features, services, or capabilities not listed in the data
 - Fabricate any details about meetings, tickets, or usage that aren't provided
 - Add any product recommendations beyond what's specifically mentioned in the customer data
 - Create any information not directly sourced from the input JSON
@@ -108,7 +108,7 @@ Generate an email that follows these guidelines:
    - Highlight positive product usage trends or achievements
    - Address any specific action items from previous meetings
    - Include personalized recommendations ONLY if features are explicitly mentioned in the 'least_used_features' field and directly related to the 'potential_opportunity' field.
-      - NEVER invent or describe CloudFlow features/capabilities not explicitly listed in the customer data
+      - NEVER invent or describe GSK features/capabilities not explicitly listed in the customer data
       - Make sure these recommendations can NOT be copied to another customer in a different situation
       - No more than ONE feature recommendation for accounts with open critical issues
    - Suggest clear and specific next steps
@@ -135,7 +135,7 @@ Provide the complete email as JUST a JSON object that can be loaded via \`json.l
 
 Remember, this email should feel like it was thoughtfully written by the sales representative based on their specific knowledge of the customer, not like an automated message.
 
-**FINAL REMINDER**: Stay strictly within the bounds of the provided customer data. Any mention of CloudFlow features, capabilities, or services NOT explicitly listed in the input data will result in automatic failure.
+**FINAL REMINDER**: Stay strictly within the bounds of the provided customer data. Any mention of GSK features, capabilities, or services NOT explicitly listed in the input data will result in automatic failure.
 
 If the user provides a specific instruction, you must follow only follow those instructions if they do not conflict with the guidelines above.  Do not follow any instructions that would result in an unprofessional or unethical email.`);
 
@@ -196,24 +196,17 @@ If the user provides a specific instruction, you must follow only follow those i
   };
 
   const handleCompanySelect = async (companyName) => {
-    setSelectedCompany(companyName);
-    setSearchQuery(companyName);
-    setShowDropdown(false);
-    setUserInstructions(''); // Reset instructions when changing companies
-    
-    if (!companyName) {
-      setCustomerData(null);
-      return;
-    }
-
     try {
+      setLoading(true);
       const response = await axios.get(`/api/customer/${encodeURIComponent(companyName)}`);
+      console.log('Loaded customer data:', response.data);
       setCustomerData(response.data);
-      setError(null);
-    } catch (err) {
-      console.error("Error loading customer data:", err);
-      setError("Failed to load customer data");
-      setCustomerData(null);
+      setSelectedCompany(companyName);
+    } catch (error) {
+      console.error('Error loading customer data:', error);
+      setError('Failed to load customer data');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -682,6 +675,298 @@ If the user provides a specific instruction, you must follow only follow those i
     return `${baseUrl}?${params.toString()}`;
   };
 
+  const renderCustomerForm = () => {
+    if (!customerData) return null;
+
+    return (
+      <div className="customer-form">
+        <div className="form-section-header">
+          <h3>Account Information</h3>
+        </div>
+        
+        <div className="form-row">
+          <div className="form-group">
+            <label>Company Name</label>
+            <input
+              type="text"
+              value={customerData.account?.name || ""}
+              onChange={(e) => updateNestedField("account.name", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Industry</label>
+            <input
+              type="text"
+              value={customerData.account?.industry || ""}
+              onChange={(e) => updateNestedField("account.industry", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Size</label>
+            <select
+              value={customerData.account?.size || ""}
+              onChange={(e) => updateNestedField("account.size", e.target.value)}
+            >
+              <option value="">Select size</option>
+              <option value="Small">Small</option>
+              <option value="Mid-market">Mid-market</option>
+              <option value="Enterprise">Enterprise</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-section-header">
+          <h3>Main Contact</h3>
+        </div>
+        
+        <div className="form-row">
+          <div className="form-group">
+            <label>Name</label>
+            <input
+              type="text"
+              value={customerData.account?.main_contact?.name || ""}
+              onChange={(e) => updateNestedField("account.main_contact.name", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Title</label>
+            <input
+              type="text"
+              value={customerData.account?.main_contact?.title || ""}
+              onChange={(e) => updateNestedField("account.main_contact.title", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Email</label>
+            <input
+              type="email"
+              value={customerData.account?.main_contact?.email || ""}
+              onChange={(e) => updateNestedField("account.main_contact.email", e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="form-section-header">
+          <h3>Relationship</h3>
+        </div>
+        
+        <div className="form-row">
+          <div className="form-group">
+            <label>Customer Since</label>
+            <input
+              type="date"
+              value={customerData.account?.relationship?.customer_since || ""}
+              onChange={(e) => updateNestedField("account.relationship.customer_since", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Deal Stage</label>
+            <select
+              value={customerData.account?.relationship?.deal_stage || ""}
+              onChange={(e) => updateNestedField("account.relationship.deal_stage", e.target.value)}
+            >
+              <option value="">Select stage</option>
+              <option value="Prospect">Prospect</option>
+              <option value="Growth">Growth</option>
+              <option value="Expansion">Expansion</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>Account Health</label>
+            <select
+              className={`health-select health-${customerData.account?.relationship?.account_health?.toLowerCase() || ""}`}
+              value={customerData.account?.relationship?.account_health || ""}
+              onChange={(e) => updateNestedField("account.relationship.account_health", e.target.value)}
+            >
+              <option value="">Select health</option>
+              <option value="Excellent">Excellent</option>
+              <option value="Good">Good</option>
+              <option value="Fair">Fair</option>
+              <option value="Poor">Poor</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="form-row">
+          <div className="form-group">
+            <label>Last Contact Date</label>
+            <input
+              type="date"
+              value={customerData.account?.relationship?.last_contact_date || ""}
+              onChange={(e) => updateNestedField("account.relationship.last_contact_date", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Next Renewal</label>
+            <input
+              type="date"
+              value={customerData.account?.relationship?.next_renewal || ""}
+              onChange={(e) => updateNestedField("account.relationship.next_renewal", e.target.value)}
+            />
+          </div>
+        </div>
+
+        <div className="form-section-header">
+          <h3>Recent Activity</h3>
+        </div>
+
+        <div className="activity-summary">
+          <div className="stat-card">
+            <span className="stat-label">Active Users</span>
+            <span className="stat-value">{customerData.recent_activity?.product_usage?.active_users || 0}</span>
+            <span className="stat-change">{customerData.recent_activity?.product_usage?.active_users_change || "0%"}</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Meetings</span>
+            <span className="stat-value">{customerData.recent_activity?.meetings?.length || 0}</span>
+            <span className="stat-subtitle">This quarter</span>
+          </div>
+          <div className="stat-card">
+            <span className="stat-label">Support Tickets</span>
+            <span className="stat-value">{customerData.recent_activity?.support_tickets?.length || 0}</span>
+            <span className="stat-subtitle">Open issues</span>
+          </div>
+        </div>
+
+        <div className="activity-details">
+          <h4>Recent Meetings</h4>
+          {customerData.recent_activity?.meetings?.map((meeting, index) => (
+            <div key={index} className="meeting-card">
+              <div className="meeting-header">
+                <span className="meeting-type">{meeting.type}</span>
+                <span className="meeting-date">{meeting.date}</span>
+              </div>
+              <p className="meeting-summary">{meeting.summary}</p>
+              <div className="action-items">
+                <strong>Action Items:</strong>
+                <ul>
+                  {meeting.action_items?.map((item, itemIndex) => (
+                    <li key={itemIndex}>{item}</li>
+                  ))}
+                </ul>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="usage-grid">
+          <div className="usage-section">
+            <h5>Most Used Features</h5>
+            <ul className="feature-list">
+              {customerData.recent_activity?.product_usage?.most_used_features?.map((feature, index) => (
+                <li key={index} className="feature-item used">{feature}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="usage-section">
+            <h5>Least Used Features</h5>
+            <ul className="feature-list">
+              {customerData.recent_activity?.product_usage?.least_used_features?.map((feature, index) => (
+                <li key={index} className="feature-item unused">{feature}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+
+        {customerData.recent_activity?.product_usage?.potential_opportunity && (
+          <div className="opportunity-box">
+            <strong>Opportunity:</strong> {customerData.recent_activity.product_usage.potential_opportunity}
+          </div>
+        )}
+
+        <div className="activity-details">
+          <h4>Support Tickets</h4>
+          <div className="tickets-grid">
+            {customerData.recent_activity?.support_tickets?.map((ticket, index) => (
+              <div key={index} className={`ticket-card ${ticket.status.toLowerCase()}`}>
+                <div className="ticket-header">
+                  <span className="ticket-id">{ticket.id}</span>
+                  <span className={`ticket-status ${ticket.status.toLowerCase()}`}>{ticket.status}</span>
+                </div>
+                <p className="ticket-issue">{ticket.issue}</p>
+                <span className={`ticket-priority priority-${ticket.priority.toLowerCase()}`}>{ticket.priority}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Drug Insights Section */}
+        {customerData.drug_insights && customerData.drug_insights.length > 0 && (
+          <>
+            <div className="form-section-header">
+              <h3>Drug Insights</h3>
+            </div>
+            
+            <div className="drug-insights-grid">
+              {customerData.drug_insights.map((drug, index) => (
+                <div key={index} className="drug-insight-card">
+                  <div className="drug-header">
+                    <h4>{drug.drug}</h4>
+                    <span className="therapy-area">{drug.therapy_area}</span>
+                  </div>
+                  <div className="drug-metrics">
+                    <div className="metric">
+                      <span className="metric-label">Scripts (30d)</span>
+                      <span className="metric-value">{drug.scripts_30d?.toLocaleString()}</span>
+                    </div>
+                    <div className="metric">
+                      <span className="metric-label">Market Share</span>
+                      <span className="metric-value">{drug.market_share_pct}%</span>
+                    </div>
+                    <div className="metric">
+                      <span className="metric-label">Formulary Status</span>
+                      <span className={`formulary-status ${drug.formulary_status?.toLowerCase().replace(' ', '-')}`}>
+                        {drug.formulary_status}
+                      </span>
+                    </div>
+                    <div className="metric">
+                      <span className="metric-label">Growth</span>
+                      <span className={`growth-value ${drug.growth_pct_vs_prev >= 0 ? 'positive' : 'negative'}`}>
+                        {drug.growth_pct_vs_prev >= 0 ? '+' : ''}{drug.growth_pct_vs_prev}%
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+
+        <div className="form-section-header">
+          <h3>Sales Representative</h3>
+        </div>
+        
+        <div className="form-row">
+          <div className="form-group">
+            <label>Name</label>
+            <input
+              type="text"
+              value={customerData.sales_rep?.name || ""}
+              onChange={(e) => updateNestedField("sales_rep.name", e.target.value)}
+            />
+          </div>
+          <div className="form-group">
+            <label>Title</label>
+            <input
+              type="text"
+              value={customerData.sales_rep?.title || ""}
+              onChange={(e) => updateNestedField("sales_rep.title", e.target.value)}
+            />
+          </div>
+        </div>
+        
+        <div className="form-group">
+          <label>Signature</label>
+          <textarea
+            value={customerData.sales_rep?.signature || ""}
+            onChange={(e) => updateNestedField("sales_rep.signature", e.target.value)}
+            rows={4}
+          />
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div className="App">
       <header className="App-header">
@@ -766,6 +1051,45 @@ If the user provides a specific instruction, you must follow only follow those i
             </div>
             
             <div className="nav-section">
+              <h4>Get started on your own:</h4>
+              <ul className="nav-list">
+                <li>
+                  <a 
+                    href="https://docs.databricks.com/aws/en/mlflow3/genai/getting-started"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="nav-item"
+                  >
+                    <span className="nav-icon">🚀</span>
+                    MLflow Quickstart
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="https://mlflow.org/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="nav-item"
+                  >
+                    <span className="nav-icon">🌐</span>
+                    MLflow Website
+                  </a>
+                </li>
+                <li>
+                  <a 
+                    href="https://docs.databricks.com/aws/en/mlflow3/genai/"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="nav-item"
+                  >
+                    <span className="nav-icon">📚</span>
+                    MLflow Documentation
+                  </a>
+                </li>
+              </ul>
+            </div>
+            
+            <div className="nav-section">
               <ul className="nav-list">
                 <li>
                   <a 
@@ -778,39 +1102,6 @@ If the user provides a specific instruction, you must follow only follow those i
                     MLflow Experiment
                     <span className="experiment-id">{import.meta.env.VITE_MLFLOW_EXPERIMENT_ID || '2288977791043869'}</span>
                   </a>
-                </li>
-              </ul>
-            </div>
-            
-            <div className="nav-section">
-              <h4>Get started on your own:</h4>
-              <ul className="nav-list">
-                <li>
-                  <button 
-                    className={`nav-item ${activeTab === 'mlflow-docs' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('mlflow-docs')}
-                  >
-                    <span className="nav-icon">📚</span>
-                    MLflow Documentation
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    className={`nav-item ${activeTab === 'mlflow-website' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('mlflow-website')}
-                  >
-                    <span className="nav-icon">🌐</span>
-                    MLflow Website
-                  </button>
-                </li>
-                <li>
-                  <button 
-                    className={`nav-item ${activeTab === 'mlflow-quickstart' ? 'active' : ''}`}
-                    onClick={() => setActiveTab('mlflow-quickstart')}
-                  >
-                    <span className="nav-icon">🔗</span>
-                    MLflow Quickstart
-                  </button>
                 </li>
               </ul>
             </div>
@@ -1376,285 +1667,7 @@ If the user provides a specific instruction, you must follow only follow those i
                     {/* Customer Data Form */}
                     {customerData && (
                       <>
-                        <div className="customer-form">
-                          {/* Account Information */}
-                          <div className="form-section-header">
-                            <h3>Account Details</h3>
-                          </div>
-                          
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Industry</label>
-                              <select
-                                value={customerData.account.industry}
-                                onChange={(e) => updateNestedField('account.industry', e.target.value)}
-                              >
-                                <option value="">Select Industry</option>
-                                <option value="Aerospace">Aerospace</option>
-                                <option value="Agriculture">Agriculture</option>
-                                <option value="Architecture">Architecture</option>
-                                <option value="Automotive">Automotive</option>
-                                <option value="Banking">Banking</option>
-                                <option value="Biotechnology">Biotechnology</option>
-                                <option value="Construction">Construction</option>
-                                <option value="Consulting">Consulting</option>
-                                <option value="E-commerce">E-commerce</option>
-                                <option value="Education">Education</option>
-                                <option value="Energy & Utilities">Energy & Utilities</option>
-                                <option value="Engineering">Engineering</option>
-                                <option value="Entertainment & Media">Entertainment & Media</option>
-                                <option value="Environmental Services">Environmental Services</option>
-                                <option value="Fashion">Fashion</option>
-                                <option value="Food & Beverage">Food & Beverage</option>
-                                <option value="Government">Government</option>
-                                <option value="Healthcare">Healthcare</option>
-                                <option value="Hospitality">Hospitality</option>
-                                <option value="Insurance">Insurance</option>
-                                <option value="Legal Services">Legal Services</option>
-                                <option value="Manufacturing">Manufacturing</option>
-                                <option value="Non-profit">Non-profit</option>
-                                <option value="Pharmaceuticals">Pharmaceuticals</option>
-                                <option value="Real Estate">Real Estate</option>
-                                <option value="Retail">Retail</option>
-                                <option value="Software">Software</option>
-                                <option value="Sports & Recreation">Sports & Recreation</option>
-                                <option value="Technology">Technology</option>
-                                <option value="Transportation & Logistics">Transportation & Logistics</option>
-                              </select>
-                            </div>
-                            <div className="form-group">
-                              <label>Size</label>
-                              <select
-                                value={customerData.account.size}
-                                onChange={(e) => updateNestedField('account.size', e.target.value)}
-                              >
-                                <option value="">Select Size</option>
-                                <optgroup label="Simple Categories">
-                                  <option value="Small Business">Small Business</option>
-                                  <option value="Mid-market">Mid-market</option>
-                                  <option value="Enterprise">Enterprise</option>
-                                </optgroup>
-                                <optgroup label="Detailed Categories">
-                                  <option value="Small Business (10-50 employees)">Small Business (10-50 employees)</option>
-                                  <option value="Small Business (51-100 employees)">Small Business (51-100 employees)</option>
-                                  <option value="Mid-market (101-500 employees)">Mid-market (101-500 employees)</option>
-                                  <option value="Mid-market (501-1000 employees)">Mid-market (501-1000 employees)</option>
-                                  <option value="Enterprise (1001-5000 employees)">Enterprise (1001-5000 employees)</option>
-                                  <option value="Enterprise (5000+ employees)">Enterprise (5000+ employees)</option>
-                                </optgroup>
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Main Contact */}
-                          <div className="form-section-header">
-                            <h3>Main Contact</h3>
-                          </div>
-                          
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Name</label>
-                              <input
-                                type="text"
-                                value={customerData.account.main_contact.name}
-                                onChange={(e) => updateNestedField('account.main_contact.name', e.target.value)}
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Title</label>
-                              <input
-                                type="text"
-                                value={customerData.account.main_contact.title}
-                                onChange={(e) => updateNestedField('account.main_contact.title', e.target.value)}
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Email</label>
-                              <input
-                                type="email"
-                                value={customerData.account.main_contact.email}
-                                onChange={(e) => updateNestedField('account.main_contact.email', e.target.value)}
-                              />
-                            </div>
-                          </div>
-
-                          {/* Relationship Status */}
-                          <div className="form-section-header">
-                            <h3>Relationship Status</h3>
-                          </div>
-                          
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Customer Since</label>
-                              <input
-                                type="date"
-                                value={customerData.account.relationship.customer_since}
-                                onChange={(e) => updateNestedField('account.relationship.customer_since', e.target.value)}
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Deal Stage</label>
-                              <select
-                                value={customerData.account.relationship.deal_stage}
-                                onChange={(e) => updateNestedField('account.relationship.deal_stage', e.target.value)}
-                              >
-                                <option value="New Customer">New Customer</option>
-                                <option value="Onboarding">Onboarding</option>
-                                <option value="Implementation">Implementation</option>
-                                <option value="Growth">Growth</option>
-                                <option value="Mature">Mature</option>
-                                <option value="Expansion">Expansion</option>
-                                <option value="At Risk">At Risk</option>
-                              </select>
-                            </div>
-                            <div className="form-group">
-                              <label>Account Health</label>
-                              <select
-                                value={customerData.account.relationship.account_health}
-                                onChange={(e) => updateNestedField('account.relationship.account_health', e.target.value)}
-                                className={`health-select health-${customerData.account.relationship.account_health.toLowerCase()}`}
-                              >
-                                <option value="Excellent">Excellent</option>
-                                <option value="Good">Good</option>
-                                <option value="Fair">Fair</option>
-                                <option value="Poor">Poor</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          {/* Recent Activity Summary */}
-                          <div className="form-section-header">
-                            <h3>Recent Activity</h3>
-                          </div>
-                          
-                          <div className="activity-summary">
-                            <div className="stat-card">
-                              <span className="stat-label">Active Users</span>
-                              <span className="stat-value">{customerData.recent_activity.product_usage.active_users}</span>
-                              <span className="stat-change">{customerData.recent_activity.product_usage.active_users_change}</span>
-                            </div>
-                            <div className="stat-card">
-                              <span className="stat-label">Last Meeting</span>
-                              <span className="stat-value">{customerData.recent_activity.meetings[0]?.date || 'N/A'}</span>
-                              <span className="stat-subtitle">{customerData.recent_activity.meetings[0]?.type || ''}</span>
-                            </div>
-                            <div className="stat-card">
-                              <span className="stat-label">Open Tickets</span>
-                              <span className="stat-value">
-                                {customerData.recent_activity.support_tickets.filter(t => t.status.includes('Open')).length}
-                              </span>
-                              <span className="stat-subtitle">Support Issues</span>
-                            </div>
-                          </div>
-
-                          {/* Meetings Details */}
-                          {customerData.recent_activity.meetings.length > 0 && (
-                            <div className="activity-details">
-                              <h4>Recent Meetings</h4>
-                              {customerData.recent_activity.meetings.map((meeting, idx) => (
-                                <div key={idx} className="meeting-card">
-                                  <div className="meeting-header">
-                                    <span className="meeting-type">{meeting.type}</span>
-                                    <span className="meeting-date">{meeting.date}</span>
-                                  </div>
-                                  <p className="meeting-summary">{meeting.summary}</p>
-                                  {meeting.action_items && meeting.action_items.length > 0 && (
-                                    <div className="action-items">
-                                      <strong>Action Items:</strong>
-                                      <ul>
-                                        {meeting.action_items.map((item, itemIdx) => (
-                                          <li key={itemIdx}>{item}</li>
-                                        ))}
-                                      </ul>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Product Usage */}
-                          <div className="activity-details">
-                            <h4>Product Usage Insights</h4>
-                            <div className="usage-grid">
-                              <div className="usage-section">
-                                <h5>Most Used Features</h5>
-                                <ul className="feature-list">
-                                  {customerData.recent_activity.product_usage.most_used_features.map((feature, idx) => (
-                                    <li key={idx} className="feature-item used">{feature}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                              <div className="usage-section">
-                                <h5>Least Used Features</h5>
-                                <ul className="feature-list">
-                                  {customerData.recent_activity.product_usage.least_used_features.map((feature, idx) => (
-                                    <li key={idx} className="feature-item unused">{feature}</li>
-                                  ))}
-                                </ul>
-                              </div>
-                            </div>
-                            {customerData.recent_activity.product_usage.potential_opportunity && (
-                              <div className="opportunity-box">
-                                <strong>Opportunity:</strong> {customerData.recent_activity.product_usage.potential_opportunity}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Support Tickets */}
-                          {customerData.recent_activity.support_tickets.length > 0 && (
-                            <div className="activity-details">
-                              <h4>Support Tickets</h4>
-                              <div className="tickets-grid">
-                                {customerData.recent_activity.support_tickets.map((ticket, idx) => (
-                                  <div key={idx} className={`ticket-card ${ticket.status.includes('Open') ? 'open' : 'resolved'}`}>
-                                    <div className="ticket-header">
-                                      <span className="ticket-id">{ticket.id}</span>
-                                      <span className={`ticket-status ${ticket.status.toLowerCase().replace(/\s+/g, '-')}`}>
-                                        {ticket.status}
-                                      </span>
-                                    </div>
-                                    <p className="ticket-issue">{ticket.issue}</p>
-                                    {ticket.priority && (
-                                      <span className={`ticket-priority priority-${ticket.priority.toLowerCase()}`}>
-                                        Priority: {ticket.priority}
-                                      </span>
-                                    )}
-                                    {ticket.resolution && (
-                                      <p className="ticket-resolution">
-                                        <strong>Resolution:</strong> {ticket.resolution}
-                                      </p>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          )}
-
-                          {/* Sales Rep */}
-                          <div className="form-section-header">
-                            <h3>Sales Representative</h3>
-                          </div>
-                          
-                          <div className="form-row">
-                            <div className="form-group">
-                              <label>Name</label>
-                              <input
-                                type="text"
-                                value={customerData.sales_rep.name}
-                                onChange={(e) => updateNestedField('sales_rep.name', e.target.value)}
-                              />
-                            </div>
-                            <div className="form-group">
-                              <label>Title</label>
-                              <input
-                                type="text"
-                                value={customerData.sales_rep.title}
-                                onChange={(e) => updateNestedField('sales_rep.title', e.target.value)}
-                              />
-                            </div>
-                          </div>
-                        </div>
+                        {renderCustomerForm()}
                       </>
                     )}
                   </div>

@@ -2884,4 +2884,170 @@ main {
   font-size: 0.875rem;
   font-weight: 600;
   color: #2d3748;
-} 
+}
+
+/* Drug Insights Styles */
+.drug-insights-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-bottom: 2rem;
+}
+
+.drug-insight-card {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  border: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.drug-insight-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+}
+
+.drug-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.drug-header h4 {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.therapy-area {
+  background: #F36F21;
+  color: white;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.drug-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 1rem;
+}
+
+.drug-metrics .metric {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.drug-metrics .metric-label {
+  font-size: 0.75rem;
+  color: #64748b;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.drug-metrics .metric-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #2d3748;
+}
+
+.formulary-status {
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.formulary-status.standard {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.formulary-status.preferred {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.formulary-status.non-formulary {
+  background: #fef3c7;
+  color: #d97706;
+}
+
+.growth-value {
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.growth-value.positive {
+  color: #059669;
+}
+
+.growth-value.negative {
+  color: #dc2626;
+}
+
+/* Responsive adjustments for drug insights */
+@media (max-width: 768px) {
+  .drug-insights-grid {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+  
+  .drug-insight-card {
+    padding: 1rem;
+  }
+  
+  .drug-metrics {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+}
+
+/* Date Input Styling */
+.form-group input[type="date"] {
+  font-family: inherit;
+  color: #2d3748;
+}
+
+.form-group input[type="date"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.7;
+  transition: opacity 0.2s ease;
+}
+
+.form-group input[type="date"]::-webkit-calendar-picker-indicator:hover {
+  opacity: 1;
+}
+
+/* Select Input Styling */
+.form-group select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6,9 12,15 18,9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.75rem center;
+  background-size: 1em;
+  padding-right: 2.5rem;
+}
+
+/* Debug styling for empty values */
+.form-group input[type="date"]:empty,
+.form-group select:empty {
+  color: #9ca3af;
+}
+
+.form-group input[type="date"]:not([value]),
+.form-group select:not([value]) {
+  color: #9ca3af;
+}

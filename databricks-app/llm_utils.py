@@ -41,7 +41,7 @@ def load_email_prompt():
     # Set an alias for the prompt version
     try:
         # Use the prompt in your application
-        prompt_uri = f"prompts:/{UC_CATALOG}.{UC_SCHEMA}.email_generation_demo/2"
+        prompt_uri = f"prompts:/{UC_CATALOG}.{UC_SCHEMA}.email_generation_demo/3"
         
         # Load prompt from registry
         loaded_prompt = mlflow.genai.load_prompt(prompt_uri)
