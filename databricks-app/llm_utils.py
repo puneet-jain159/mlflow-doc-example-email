@@ -137,14 +137,62 @@ def _create_messages(customer_data: dict, custom_prompt: str = None):
 
 
 def _clean_json_response(response_content: str) -> str:
-    """Clean JSON response by removing markdown code block markers"""
+    """Clean JSON response by removing markdown code block markers and invalid characters"""
+    import re
+    
     clean_string = response_content
+    
+    # Remove markdown code block markers
     if response_content.startswith("```json\n") and response_content.endswith("\n```"):
         clean_string = response_content[len("```json\n") : -len("\n```")]
     elif response_content.startswith("```") and response_content.endswith("```"):
         clean_string = response_content[3:-3]
 
-    return clean_string.strip()
+    # Remove invalid control characters that can cause JSON decode errors
+    # This includes characters like \x00-\x1f except for \t, \n, \r
+    clean_string = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', clean_string)
+    
+    # Remove any trailing commas before closing braces/brackets
+    clean_string = re.sub(r',(\s*[}\]])', r'\1', clean_string)
+    
+    # Handle common JSON formatting issues
+    clean_string = clean_string.strip()
+    
+    return clean_string
+
+
+def _safe_parse_json(json_string: str) -> dict:
+    """Safely parse JSON with multiple fallback strategies"""
+    import json
+    import re
+    
+    # First try: direct parsing
+    try:
+        return json.loads(json_string)
+    except json.JSONDecodeError:
+        pass
+    
+    # Second try: clean and parse
+    try:
+        cleaned = _clean_json_response(json_string)
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+    
+    # Third try: find JSON object in the string
+    try:
+        # Look for JSON object pattern
+        json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+        matches = re.findall(json_pattern, json_string)
+        if matches:
+            # Try the longest match
+            longest_match = max(matches, key=len)
+            return json.loads(longest_match)
+    except json.JSONDecodeError:
+        pass
+    
+    # If all attempts fail, raise the original error
+    raise json.JSONDecodeError(f"Failed to parse JSON after multiple attempts", json_string, 0)
 
 
 def _get_current_trace_id():
@@ -164,8 +212,15 @@ def core_generate_email_logic(customer_data: dict, custom_prompt: str = None):
     )
 
     response_content = response.choices[0].message.content
-    clean_string = _clean_json_response(response_content)
-    email_json = json.loads(clean_string)
+    try:
+        email_json = _safe_parse_json(response_content)
+    except json.JSONDecodeError as e:
+        # Log the problematic content for debugging
+        print(f"JSON decode error: {e}")
+        print(f"Response content length: {len(response_content)}")
+        print(f"First 500 chars: {response_content[:500]}")
+        print(f"Last 500 chars: {response_content[-500:]}")
+        raise
 
     # Add trace_id to the response
     email_json["trace_id"] = _get_current_trace_id()
@@ -201,14 +256,18 @@ def stream_output_reducer(chunks):
 
     # Try to parse the accumulated content as JSON
     try:
-        clean_string = _clean_json_response(full_content)
-        email_json = json.loads(clean_string)
+        email_json = _safe_parse_json(full_content)
 
         # Add trace_id to the response
         email_json["trace_id"] = trace_id
 
         return email_json
     except json.JSONDecodeError as e:
+        # Log the problematic content for debugging
+        print(f"JSON decode error in stream_output_reducer: {e}")
+        print(f"Full content length: {len(full_content)}")
+        print(f"First 500 chars: {full_content[:500]}")
+        print(f"Last 500 chars: {full_content[-500:]}")
         return {
             "error": f"Failed to parse email JSON: {str(e)}",
             "raw_content": full_content,
@@ -250,8 +309,7 @@ async def stream_generate_email_logic(customer_data: dict, custom_prompt: str = 
 
     # Parse the complete response to extract structured data
     try:
-        clean_string = _clean_json_response(full_response)
-        email_json = json.loads(clean_string)
+        email_json = _safe_parse_json(full_response)
 
         user_instructions = customer_data.get("user_input")
         if user_instructions is None or len(user_instructions) == 0:
@@ -260,8 +318,14 @@ async def stream_generate_email_logic(customer_data: dict, custom_prompt: str = 
         else:
             mlflow.update_current_trace(tags={"user_instructions": "yes"})
 
+        # Ensure customer_data is a dictionary and has the expected structure
+        if isinstance(customer_data, dict) and 'account' in customer_data and isinstance(customer_data['account'], dict):
+            customer_name = customer_data['account'].get('name', 'Unknown Customer')
+        else:
+            customer_name = 'Unknown Customer'
+            
         mlflow.update_current_trace(
-            request_preview=f"Customer: {customer_data['account']['name']}; User Instructions: {user_instructions}",
+            request_preview=f"Customer: {customer_name}; User Instructions: {user_instructions}",
             response_preview=email_json["body"],
         )
 
@@ -269,6 +333,11 @@ async def stream_generate_email_logic(customer_data: dict, custom_prompt: str = 
         yield {"type": "done", "trace_id": _get_current_trace_id()}
 
     except json.JSONDecodeError as e:
+        # Log the problematic content for debugging
+        print(f"JSON decode error in stream_generate_email_logic: {e}")
+        print(f"Full response length: {len(full_response)}")
+        print(f"First 500 chars: {full_response[:500]}")
+        print(f"Last 500 chars: {full_response[-500:]}")
         yield {
             "type": "error",
             "error": f"Failed to parse email JSON: {str(e)}",

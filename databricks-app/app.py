@@ -34,6 +34,47 @@ from quality_metrics import (
 )
 
 
+from tracing import (
+  setup_mlflow_tracing
+)
+
+
+def ensure_databricks_host_protocol():
+    """Ensure DATABRICKS_HOST has https:// protocol if not already present"""
+    databricks_host = os.getenv("DATABRICKS_HOST")
+    if databricks_host:
+        # Check if the host already has a protocol
+        if not databricks_host.startswith(("http://", "https://")):
+            # Add https:// protocol
+            os.environ["DATABRICKS_HOST"] = f"https://{databricks_host}"
+            print(f"Added https:// protocol to DATABRICKS_HOST: {os.environ['DATABRICKS_HOST']}")
+        elif databricks_host.startswith("http://"):
+            # Convert http:// to https:// for security
+            os.environ["DATABRICKS_HOST"] = databricks_host.replace("http://", "https://", 1)
+            print(f"Converted http:// to https:// for DATABRICKS_HOST: {os.environ['DATABRICKS_HOST']}")
+        else:
+            print(f"DATABRICKS_HOST already has https:// protocol: {databricks_host}")
+    else:
+        print("Warning: DATABRICKS_HOST environment variable not set")
+
+
+def get_databricks_host():
+    """Get the DATABRICKS_HOST with proper https:// protocol"""
+    databricks_host = os.getenv("DATABRICKS_HOST")
+    if databricks_host:
+        # Ensure it has https:// protocol
+        if not databricks_host.startswith(("http://", "https://")):
+            return f"https://{databricks_host}"
+        elif databricks_host.startswith("http://"):
+            # Convert http:// to https:// for security
+            return databricks_host.replace("http://", "https://", 1)
+        else:
+            return databricks_host
+    return None
+
+
+
+
 # Load customer data from gsk_10_accounts.jsonl
 def load_customer_data():
     customers = []
@@ -151,6 +192,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ensure DATABRICKS_HOST has proper protocol
+ensure_databricks_host_protocol()
+setup_mlflow_tracing()
+
+
 
 @app.get("/api/hello")
 async def query():
@@ -232,8 +278,20 @@ async def health_check():
 @app.get("/api/env-check")
 async def env_check():
     """Endpoint to verify environment variables are loaded correctly"""
+    databricks_host = os.getenv("DATABRICKS_HOST")
+    
+    # Check if DATABRICKS_HOST has proper protocol
+    protocol_status = "unknown"
+    if databricks_host:
+        if databricks_host.startswith("https://"):
+            protocol_status = "https_secure"
+        elif databricks_host.startswith("http://"):
+            protocol_status = "http_insecure"
+        else:
+            protocol_status = "no_protocol"
+    
     env_vars = {
-        "DATABRICKS_HOST": os.getenv("DATABRICKS_HOST"),
+        "DATABRICKS_HOST": databricks_host,
         "MLFLOW_TRACKING_URI": os.getenv("MLFLOW_TRACKING_URI"),
         "MLFLOW_EXPERIMENT_ID": os.getenv("MLFLOW_EXPERIMENT_ID"),
         "LLM_MODEL": os.getenv("LLM_MODEL"),
@@ -244,6 +302,24 @@ async def env_check():
         "status": "ok",
         "environment_variables": env_vars,
         "all_vars_present": all(v is not None for v in env_vars.values()),
+        "databricks_host_protocol_status": protocol_status,
+        "databricks_host_has_protocol": databricks_host.startswith(("http://", "https://")) if databricks_host else False,
+    }
+
+
+@app.get("/api/databricks-host-check")
+async def databricks_host_check():
+    """Endpoint to specifically check DATABRICKS_HOST configuration"""
+    original_host = os.getenv("DATABRICKS_HOST")
+    processed_host = get_databricks_host()
+    
+    return {
+        "original_databricks_host": original_host,
+        "processed_databricks_host": processed_host,
+        "has_protocol": original_host.startswith(("http://", "https://")) if original_host else False,
+        "is_secure": original_host.startswith("https://") if original_host else False,
+        "was_modified": original_host != processed_host if original_host and processed_host else False,
+        "status": "configured" if processed_host else "not_set"
     }
 
 

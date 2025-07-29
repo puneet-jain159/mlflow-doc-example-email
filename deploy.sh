@@ -197,24 +197,28 @@ update_app_yaml
   echo "Frontend build complete and copied to databricks-app/static"
 ) &
 
-# Backend packaging - databricks-app is already structured, just need to import it
+# Backend packaging and workspace import
 (
   # Freeze uv environment to requirements.txt
   echo "Freezing uv environment to requirements.txt..."
   uv pip compile pyproject.toml > databricks-app/requirements.txt
   echo "Requirements exported to databricks-app/requirements.txt"
   
-  databricks workspace import-dir databricks-app "$APP_FOLDER_IN_WORKSPACE" --overwrite
-#   cd databricks-app
-  # Import the application including the static directory
-#   databricks workspace import-dir . "$APP_FOLDER_IN_WORKSPACE" --overwrite
+  # Delete existing workspace path if it exists
+  echo "Cleaning up existing workspace path..."
+  /opt/homebrew/bin/databricks workspace delete "$APP_FOLDER_IN_WORKSPACE" --recursive || true
+  
+  # Import the directory to the workspace using import-dir
+  echo "Importing application directory to workspace..."
+  /opt/homebrew/bin/databricks workspace import-dir databricks-app "$APP_FOLDER_IN_WORKSPACE" --overwrite
 ) &
 
 # Wait for both background processes to finish
 wait
 
-# Deploy the application
-databricks apps deploy "$LAKEHOUSE_APP_NAME" --source-code-path="$APP_FOLDER_IN_WORKSPACE"
+# Deploy the application using the newer CLI directly
+echo "Deploying application from workspace path..."
+/opt/homebrew/bin/databricks apps deploy "$LAKEHOUSE_APP_NAME" --source-code-path="$APP_FOLDER_IN_WORKSPACE"
 
 # Print the app page URL -- put your workspace name in the below URL.
 echo "Deployed!"
