@@ -13,10 +13,6 @@ import uvicorn
 import openai
 from openai import AsyncOpenAI
 import mlflow
-from llm_utils import load_email_prompt, core_generate_email_logic, stream_generate_email_logic
-from quality_metrics import run_quality_assessment, get_quality_metrics_summary
-
-
 # Import from the llm_utils module
 from llm_utils import (
     core_generate_email_logic,
@@ -33,10 +29,7 @@ from quality_metrics import (
     QUALITY_GUIDELINES
 )
 
-
-from tracing import (
-  setup_mlflow_tracing
-)
+from tracing import setup_mlflow_tracing
 
 
 def ensure_databricks_host_protocol():
@@ -164,16 +157,71 @@ class BaselinePromptResponse(BaseModel):
     error: Optional[str] = None
 
 
-class PromptTestRequest(BaseModel):
-    prompt: str
+
+
+
+class QualityAssessmentJobRequest(BaseModel):
+    max_traces: Optional[int] = 5
+    custom_guidelines: Optional[Dict[str, str]] = None
+
+
+# New models for job + polling pattern
+class JobStatus(str, Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class PromptEvaluationJobRequest(BaseModel):
+    baseline_prompt: str
+    new_prompt: str
     customer_data: Optional[Dict[str, Any]] = None
 
 
-class PromptTestResponse(BaseModel):
-    score: Optional[float] = None
-    metrics: Optional[Dict[str, Dict[str, Any]]] = None
-    run_id: Optional[str] = None
+class JobSubmissionResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    message: str
+
+
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: JobStatus
+    progress: Optional[float] = None
+    result: Optional[Dict[str, Any]] = None  # Changed to accept any result type
     error: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+# In-memory job store (in production, use a proper database)
+_job_store = {}
+
+
+async def _update_job_progress(job_id: str, progress: float, status: JobStatus = None):
+    """Helper function to update job progress and status"""
+    if job_id in _job_store:
+        _job_store[job_id]["progress"] = progress
+        _job_store[job_id]["updated_at"] = datetime.now().isoformat()
+        if status:
+            _job_store[job_id]["status"] = status
+        # Small yield to allow other tasks to run
+        await asyncio.sleep(0.1)
+
+
+def _complete_job(job_id: str, result, error: str = None):
+    """Helper function to complete a job with result or error"""
+    if job_id in _job_store:
+        if error:
+            _job_store[job_id]["status"] = JobStatus.FAILED
+            _job_store[job_id]["error"] = error
+        else:
+            _job_store[job_id]["status"] = JobStatus.COMPLETED
+            _job_store[job_id]["progress"] = 1.0
+            _job_store[job_id]["result"] = result.dict() if hasattr(result, 'dict') else result
+        
+        _job_store[job_id]["updated_at"] = datetime.now().isoformat()
 
 
 app = FastAPI()
@@ -379,11 +427,60 @@ async def submit_feedback(feedback: FeedbackRequest):
         )
 
 
+@app.post("/api/quality-assessment-job", response_model=JobSubmissionResponse)
+async def submit_quality_assessment_job(request: QualityAssessmentJobRequest):
+    """Submit a quality assessment job for asynchronous processing"""
+    import uuid
+    from datetime import datetime
+    import asyncio
+    
+    # Generate unique job ID
+    job_id = str(uuid.uuid4())
+    created_at = datetime.now().isoformat()
+    
+    # Initialize job in store
+    _job_store[job_id] = {
+        "status": JobStatus.PENDING,
+        "request": request.dict(),
+        "created_at": created_at,
+        "updated_at": created_at,
+        "progress": 0.0,
+        "result": None,
+        "error": None,
+        "job_type": "quality_assessment"
+    }
+    
+
+    
+    # Start async job processing
+    asyncio.create_task(_process_quality_assessment_job(job_id))
+    
+    return JobSubmissionResponse(
+        job_id=job_id,
+        status=JobStatus.PENDING,
+        message="Quality assessment job submitted successfully. Use /api/job-status/{job_id} to check progress."
+    )
+
+
 @app.post("/api/quality-assessment", response_model=QualityMetricsResponse)
-async def run_quality_assessment_api(request: QualityAssessmentRequest):
+async def run_quality_assessment_api(request: QualityAssessmentRequest, use_job: bool = False):
     """
     Run quality assessment on recent production traces with optional custom guidelines
     """
+    
+    # If job mode is requested, redirect to job submission
+    if use_job:
+        job_request = QualityAssessmentJobRequest(
+            max_traces=request.max_traces,
+            custom_guidelines=request.custom_guidelines
+        )
+        job_response = await submit_quality_assessment_job(job_request)
+        raise HTTPException(
+            status_code=202, 
+            detail=f"Job submitted. Use /api/job-status/{job_response.job_id} to check progress."
+        )
+    
+    # Original synchronous implementation
     try:
         import datetime
         
@@ -436,8 +533,23 @@ async def quality_assessment_health():
 
 
 @app.post("/api/evaluate-prompt", response_model=PromptEvaluationResponse)
-async def evaluate_prompt(request: PromptEvaluationRequest):
+async def evaluate_prompt(request: PromptEvaluationRequest, use_job: bool = False):
     """Evaluate a new prompt against a baseline prompt using quality assessment framework"""
+    
+    # If job mode is requested, redirect to job submission
+    if use_job:
+        job_request = PromptEvaluationJobRequest(
+            baseline_prompt=request.baseline_prompt,
+            new_prompt=request.new_prompt,
+            customer_data=request.customer_data
+        )
+        job_response = await submit_prompt_evaluation_job(job_request)
+        raise HTTPException(
+            status_code=202, 
+            detail=f"Job submitted. Use /api/job-status/{job_response.job_id} to check progress."
+        )
+    
+    # Original synchronous implementation
     try:
         from llm_utils import create_custom_email_generator
         from quality_metrics import create_guidelines_scorers, evaluate, get_quality_metrics_summary
@@ -543,6 +655,234 @@ async def evaluate_prompt(request: PromptEvaluationRequest):
         )
 
 
+@app.post("/api/evaluate-prompt-job", response_model=JobSubmissionResponse)
+async def submit_prompt_evaluation_job(request: PromptEvaluationJobRequest):
+    """Submit a prompt evaluation job for asynchronous processing"""
+    import uuid
+    from datetime import datetime
+    import asyncio
+    
+    # Generate unique job ID
+    job_id = str(uuid.uuid4())
+    created_at = datetime.now().isoformat()
+    
+    # Initialize job in store
+    _job_store[job_id] = {
+        "status": JobStatus.PENDING,
+        "request": request.dict(),
+        "created_at": created_at,
+        "updated_at": created_at,
+        "progress": 0.0,
+        "result": None,
+        "error": None
+    }
+    
+
+    
+    # Start async job processing
+    asyncio.create_task(_process_prompt_evaluation_job(job_id))
+    
+    return JobSubmissionResponse(
+        job_id=job_id,
+        status=JobStatus.PENDING,
+        message="Job submitted successfully. Use /api/job-status/{job_id} to check progress."
+    )
+
+
+@app.get("/api/job-status/{job_id}", response_model=JobStatusResponse)
+async def get_job_status(job_id: str):
+    """Get the status of a prompt evaluation job"""
+    if job_id not in _job_store:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    job = _job_store[job_id]
+    
+
+    
+    return JobStatusResponse(
+        job_id=job_id,
+        status=job["status"],
+        progress=job.get("progress", 0.0),
+        result=job.get("result"),
+        error=job.get("error"),
+        created_at=job["created_at"],
+        updated_at=job["updated_at"]
+    )
+
+
+@app.delete("/api/job/{job_id}")
+async def delete_job(job_id: str):
+    """Delete a job from the store"""
+    if job_id not in _job_store:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    del _job_store[job_id]
+    return {"message": "Job deleted successfully"}
+
+
+@app.get("/api/jobs")
+async def list_jobs():
+    """List all jobs in the store"""
+    jobs = []
+    for job_id, job in _job_store.items():
+        jobs.append({
+            "job_id": job_id,
+            "status": job["status"],
+            "created_at": job["created_at"],
+            "updated_at": job["updated_at"],
+            "progress": job.get("progress", 0.0)
+        })
+    
+    return {"jobs": jobs}
+
+
+async def _process_prompt_evaluation_job(job_id: str):
+    """Process a prompt evaluation job asynchronously"""
+    from datetime import datetime
+    import asyncio
+    import traceback
+    from functools import partial
+    
+    try:
+        job = _job_store[job_id]
+        await _update_job_progress(job_id, 0.1, JobStatus.RUNNING)
+        
+        # Get job parameters
+        request_data = job["request"]
+        baseline_prompt = str(request_data["baseline_prompt"])
+        new_prompt = str(request_data["new_prompt"])
+        customer_data = request_data.get("customer_data")
+        
+        # Get sample customer data for evaluation
+        if customer_data:
+            sample_data = [customer_data]
+        else:
+            # Use first few customers from our data as test cases
+            sample_data = CUSTOMER_DATA[:4] if len(CUSTOMER_DATA) >= 4 else CUSTOMER_DATA
+        
+        if not sample_data:
+            raise ValueError("No customer data available for evaluation")
+        
+        await _update_job_progress(job_id, 0.2)
+        
+        # Import required modules
+        try:
+            from llm_utils import create_custom_email_generator
+            from quality_metrics import create_guidelines_scorers, evaluate, get_quality_metrics_summary
+        except ImportError as e:
+            raise Exception(f"Failed to import required modules: {e}")
+        
+        # Create custom generators for baseline and new prompt (run in thread)
+        loop = asyncio.get_running_loop()
+        
+        def create_generators():
+            baseline_gen = create_custom_email_generator(baseline_prompt)
+            new_gen = create_custom_email_generator(new_prompt)
+            return baseline_gen, new_gen
+        
+        baseline_generator, new_generator = await loop.run_in_executor(None, create_generators)
+        
+        await _update_job_progress(job_id, 0.3)
+        
+        # Create prediction functions for evaluation
+        def baseline_predict_fn(inputs):
+            """Prediction function using baseline prompt"""
+            result = baseline_generator(inputs.get("inputs", inputs))
+            return {
+                "body": result.get("body", ""),
+                "subject_line": result.get("subject_line", "")
+            }
+        
+        def new_predict_fn(inputs):
+            """Prediction function using new prompt"""
+            result = new_generator(inputs.get("inputs", inputs))
+            return {
+                "body": result.get("body", ""),
+                "subject_line": result.get("subject_line", "")
+            }
+        
+        # Format data for evaluation
+        formatted_data = [{"inputs": {"inputs": customer}} for customer in sample_data]
+        
+        await _update_job_progress(job_id, 0.4)
+        
+        # Get quality guidelines scorers (run in thread)
+        scorers = await loop.run_in_executor(None, create_guidelines_scorers)
+        
+        await _update_job_progress(job_id, 0.5)
+        
+        # Run evaluation for baseline prompt (run in thread to avoid blocking)
+        baseline_evaluate = partial(
+            evaluate,
+            data=formatted_data,
+            predict_fn=baseline_predict_fn,
+            scorers=scorers
+        )
+        baseline_results = await loop.run_in_executor(None, baseline_evaluate)
+        
+        await _update_job_progress(job_id, 0.7)
+        
+        # Run evaluation for new prompt (run in thread to avoid blocking)
+        new_evaluate = partial(
+            evaluate,
+            data=formatted_data,
+            predict_fn=new_predict_fn,
+            scorers=scorers
+        )
+        new_results = await loop.run_in_executor(None, new_evaluate)
+        
+        await _update_job_progress(job_id, 0.9)
+        
+        # Get summaries using the proper function (run in thread)
+        def get_summaries():
+            baseline_summary = get_quality_metrics_summary(baseline_results)
+            new_summary = get_quality_metrics_summary(new_results)
+            return baseline_summary, new_summary
+        
+        baseline_summary, new_summary = await loop.run_in_executor(None, get_summaries)
+        
+        # Calculate scores
+        baseline_score = baseline_summary.get("overall_score", 0.0)
+        new_score = new_summary.get("overall_score", 0.0)
+        
+        # Determine improvement
+        score_diff = new_score - baseline_score
+        if score_diff > 0.1:
+            improvement = "significant_improvement"
+        elif score_diff > 0.05:
+            improvement = "moderate_improvement"
+        elif score_diff > 0:
+            improvement = "slight_improvement"
+        elif score_diff < -0.1:
+            improvement = "significant_decline"
+        elif score_diff < -0.05:
+            improvement = "moderate_decline"
+        elif score_diff < 0:
+            improvement = "slight_decline"
+        else:
+            improvement = "no_change"
+        
+        # Get run_id from the evaluation results
+        run_id = getattr(new_results, 'run_id', None)
+        baseline_run_id = getattr(baseline_results, 'run_id', None)
+        
+        # Create result
+        result = PromptEvaluationResponse(
+            baseline_score=baseline_score,
+            new_score=new_score,
+            improvement=improvement,
+            run_id=run_id,
+            baseline_run_id=baseline_run_id
+        )
+        
+        # Complete job successfully
+        _complete_job(job_id, result)
+        
+    except Exception as e:
+        # Complete job with error
+        _complete_job(job_id, None, f"Job failed: {str(e)}\nTraceback: {traceback.format_exc()}")
+
+
 @app.get("/api/baseline-prompt", response_model=BaselinePromptResponse)
 async def get_baseline_prompt():
     """Fetch the baseline prompt from MLflow registry"""
@@ -581,66 +921,77 @@ async def get_baseline_prompt():
         )
 
 
-@app.post("/api/test-prompt", response_model=PromptTestResponse)
-async def test_single_prompt(request: PromptTestRequest):
-    """Test a single prompt and get its quality score using quality assessment framework"""
+
+
+
+async def _process_quality_assessment_job(job_id: str):
+    """Process a quality assessment job asynchronously"""
+    from datetime import datetime
+    import asyncio
+    import traceback
+    from functools import partial
+    
     try:
-        from llm_utils import create_custom_email_generator
-        from quality_metrics import create_guidelines_scorers, evaluate, get_quality_metrics_summary
+        job = _job_store[job_id]
+        await _update_job_progress(job_id, 0.1, JobStatus.RUNNING)
         
-        # Get sample customer data for evaluation
-        if request.customer_data:
-            sample_data = [request.customer_data]
-        else:
-            # Use first few customers from our data as test cases
-            sample_data = CUSTOMER_DATA[:3] if len(CUSTOMER_DATA) >= 3 else CUSTOMER_DATA
+        # Get job parameters
+        request_data = job["request"]
+        max_traces = request_data.get("max_traces", 5)
+        custom_guidelines = request_data.get("custom_guidelines")
         
-        if not sample_data:
-            raise ValueError("No customer data available for evaluation")
+        await _update_job_progress(job_id, 0.2)
         
-        # Create custom generator for the test prompt
-        test_generator = create_custom_email_generator(request.prompt)
+        # Import required modules
+        try:
+            from quality_metrics import run_quality_assessment, get_quality_metrics_summary
+        except ImportError as e:
+            raise Exception(f"Failed to import required modules: {e}")
         
-        # Create prediction function for evaluation
-        def test_predict_fn(inputs):
-            """Prediction function using test prompt"""
-            result = test_generator(inputs.get("inputs", inputs))
-            return {
-                "body": result.get("body", ""),
-                "subject_line": result.get("subject_line", "")
-            }
+        await _update_job_progress(job_id, 0.3)
         
-        # Format data for evaluation
-        formatted_data = [{"inputs": {"inputs": customer}} for customer in sample_data]
+        # Run quality assessment (run in thread to avoid blocking)
+        loop = asyncio.get_running_loop()
         
-        # Get quality guidelines scorers
-        scorers = create_guidelines_scorers()
+        def run_assessment():
+            return run_quality_assessment(
+                max_traces=max_traces,
+                custom_guidelines=custom_guidelines
+            )
         
-        # Run evaluation for the test prompt
-        results = evaluate(
-            data=formatted_data,
-            predict_fn=test_predict_fn,
-            scorers=scorers
-        )
+        results = await loop.run_in_executor(None, run_assessment)
         
-        # Get summary using the proper function
-        summary = get_quality_metrics_summary(results)
+        await _update_job_progress(job_id, 0.7)
         
-        # Extract scores
-        score = summary.get("overall_score", 0.0)
-        metrics = summary.get("metrics", {})
-        run_id = getattr(results, 'run_id', None)
+        # Get summary using the proper function (run in thread)
+        def get_summary():
+            import datetime
+            summary = get_quality_metrics_summary(results)
+            summary["assessment_type"] = "production_traces"
+            summary["timestamp"] = datetime.datetime.now().isoformat()
+            
+            # Add run_id to response
+            if hasattr(results, 'run_id'):
+                summary["run_id"] = results.run_id
+            
+            return summary
         
-        return PromptTestResponse(
-            score=score,
-            metrics=metrics,
-            run_id=run_id
-        )
+        summary = await loop.run_in_executor(None, get_summary)
+        
+        await _update_job_progress(job_id, 0.9)
+        
+        # Create result
+        result = QualityMetricsResponse(**summary)
+        
+        # Complete job successfully
+        _complete_job(job_id, result)
         
     except Exception as e:
-        return PromptTestResponse(
-            error=f"Error testing prompt: {str(e)}"
-        )
+        # Complete job with error
+        _complete_job(job_id, None, f"Quality assessment job failed: {str(e)}\nTraceback: {traceback.format_exc()}")
+
+
+
 
 
 # Mount static files - this must be after all API routes

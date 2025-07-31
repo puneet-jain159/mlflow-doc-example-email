@@ -5,10 +5,6 @@ from typing import List, Dict, Any, Optional
 import json
 import functools
 from llm_utils import core_generate_email_logic
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 
 # Quality Metrics Guidelines with proper indentation

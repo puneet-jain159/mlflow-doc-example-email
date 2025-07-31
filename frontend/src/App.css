@@ -3051,3 +3051,156 @@ main {
 .form-group select:not([value]) {
   color: #9ca3af;
 }
+
+/* Job Pattern Toggle Styles */
+.job-pattern-toggle {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+  padding-left: 3rem;
+  min-height: 1.5rem;
+}
+
+.toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 2.5rem;
+  height: 1.5rem;
+  background-color: #cbd5e0;
+  border-radius: 1rem;
+  transition: 0.3s;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 1.25rem;
+  width: 1.25rem;
+  left: 0.125rem;
+  bottom: 0.125rem;
+  background-color: white;
+  border-radius: 50%;
+  transition: 0.3s;
+}
+
+.toggle-input:checked + .toggle-slider {
+  background-color: #F36F21;
+}
+
+.toggle-input:checked + .toggle-slider:before {
+  transform: translateX(1rem);
+}
+
+.toggle-text {
+  font-weight: 600;
+  color: #2d3748;
+  margin-left: 0.5rem;
+}
+
+.toggle-description {
+  margin-top: 0.5rem;
+  font-size: 0.875rem;
+  color: #64748b;
+  margin-left: 3rem;
+}
+
+/* Job Progress Styles */
+.job-progress-container {
+  margin-bottom: 1rem;
+  padding: 1rem;
+  background: #f8fafc;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+}
+
+.job-progress-bar {
+  width: 100%;
+  height: 0.5rem;
+  background-color: #e2e8f0;
+  border-radius: 0.25rem;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.job-progress-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+  border-radius: 0.25rem;
+}
+
+.job-progress-text {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.875rem;
+  color: #4a5568;
+}
+
+.job-id {
+  font-family: 'Courier New', monospace;
+  font-size: 0.75rem;
+  color: #718096;
+  background: #edf2f7;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+/* Job Status Colors */
+.job-progress-fill[style*="background-color: #28a745"] {
+  background-color: #28a745 !important;
+}
+
+.job-progress-fill[style*="background-color: #E81E23"] {
+  background-color: #E81E23 !important;
+}
+
+.job-progress-fill[style*="background-color: #F36F21"] {
+  background-color: #F36F21 !important;
+}
+
+/* Responsive adjustments for job pattern */
+@media (max-width: 768px) {
+  .job-pattern-toggle {
+    padding: 0.75rem;
+  }
+  
+  .toggle-text {
+    font-size: 0.875rem;
+  }
+  
+  .toggle-description {
+    font-size: 0.75rem;
+  }
+  
+  .job-progress-container {
+    padding: 0.75rem;
+  }
+  
+  .job-progress-text {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .job-id {
+    font-size: 0.625rem;
+  }
+}

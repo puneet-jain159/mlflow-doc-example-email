@@ -55,6 +55,27 @@ function App() {
   const [assessmentError, setAssessmentError] = useState(null);
   const [mlflowConfig, setMlflowConfig] = useState(null);
 
+  // Quality assessment job state
+  const [assessmentJobId, setAssessmentJobId] = useState(null);
+  const [assessmentJobStatus, setAssessmentJobStatus] = useState(null);
+  const [assessmentProgress, setAssessmentProgress] = useState(0);
+  const [assessmentPollingInterval, setAssessmentPollingInterval] = useState(null);
+
+  // Job + polling state for prompt evaluation
+  const [evaluationJobId, setEvaluationJobId] = useState(null);
+  const [evaluationJobStatus, setEvaluationJobStatus] = useState(null);
+  const [evaluationProgress, setEvaluationProgress] = useState(0);
+  const [evaluationPollingInterval, setEvaluationPollingInterval] = useState(null);
+  const [useJobPattern, setUseJobPattern] = useState(true); // Default to job pattern
+
+  // Job + polling state for test prompt
+  const [testPromptJobId, setTestPromptJobId] = useState(null);
+  const [testPromptJobStatus, setTestPromptJobStatus] = useState(null);
+  const [testPromptProgress, setTestPromptProgress] = useState(0);
+  const [testPromptPollingInterval, setTestPromptPollingInterval] = useState(null);
+  const [testPromptResults, setTestPromptResults] = useState(null);
+  const [testPromptLoading, setTestPromptLoading] = useState(false);
+
   // Prompt comparison state
   const [baselinePrompt, setBaselinePrompt] = useState(`You are an expert sales communication assistant for GSK Inc. Your task is to generate a personalized, professional follow-up email for our sales representatives to send to their customers at the end of the day.
 
@@ -442,19 +463,66 @@ If the user provides a specific instruction, you must follow only follow those i
     setAssessmentLoading(true);
     setAssessmentError(null);
     setAssessmentResults(null);
+    setAssessmentJobId(null);
+    setAssessmentJobStatus(null);
+    setAssessmentProgress(0);
+    
+    // Clear any existing polling interval
+    if (assessmentPollingInterval) {
+      clearInterval(assessmentPollingInterval);
+    }
 
     try {
-      const response = await axios.post('/api/quality-assessment', {
+      // Use job pattern for quality assessment
+      const response = await axios.post('/api/quality-assessment-job', {
         max_traces: 5,
         custom_guidelines: qualityGuidelines
       });
-
-      setAssessmentResults(response.data);
-      setAssessmentError(null);
+      
+      const jobId = response.data.job_id;
+      
+      setAssessmentJobId(jobId);
+      setAssessmentJobStatus('pending');
+      setAssessmentProgress(0.1); // Show initial progress
+      
+      // Start polling for job status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await axios.get(`/api/job-status/${jobId}`);
+          const jobStatus = statusResponse.data;
+          
+          // Update state with new values
+          const newStatus = jobStatus.status;
+          const newProgress = jobStatus.progress || 0;
+          
+          setAssessmentJobStatus(newStatus);
+          setAssessmentProgress(newProgress);
+          
+          if (jobStatus.status === 'completed') {
+            setAssessmentResults(jobStatus.result);
+            setAssessmentLoading(false);
+            clearInterval(pollInterval);
+            setAssessmentPollingInterval(null);
+            setAssessmentError(null);
+          } else if (jobStatus.status === 'failed') {
+            setAssessmentError(jobStatus.error || 'Assessment job failed');
+            setAssessmentLoading(false);
+            clearInterval(pollInterval);
+            setAssessmentPollingInterval(null);
+          }
+        } catch (pollError) {
+          setAssessmentError('Failed to check job status');
+          setAssessmentLoading(false);
+          clearInterval(pollInterval);
+          setAssessmentPollingInterval(null);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      setAssessmentPollingInterval(pollInterval);
+      
     } catch (err) {
       console.error("Error running assessment:", err);
       setAssessmentError(err.response?.data?.detail || "Failed to run assessment");
-    } finally {
       setAssessmentLoading(false);
     }
   };
@@ -512,20 +580,164 @@ If the user provides a specific instruction, you must follow only follow those i
   const handleEvaluateNewPrompt = async () => {
     setEvaluationLoading(true);
     setEvaluationResults(null);
+    setEvaluationJobId(null);
+    setEvaluationJobStatus(null);
+    setEvaluationProgress(0);
+    
+    // Clear any existing polling interval
+    if (evaluationPollingInterval) {
+      clearInterval(evaluationPollingInterval);
+    }
     
     try {
-      const response = await axios.post('/api/evaluate-prompt', {
-        baseline_prompt: baselinePrompt,
-        new_prompt: newPrompt,
-        customer_data: customerData || {}
-      });
-      
-      setEvaluationResults(response.data);
+      if (useJobPattern) {
+        // Use job pattern
+
+        
+        const response = await axios.post('/api/evaluate-prompt-job', {
+          baseline_prompt: baselinePrompt,
+          new_prompt: newPrompt,
+          customer_data: customerData || {}
+        });
+        
+        const jobId = response.data.job_id;
+        
+        setEvaluationJobId(jobId);
+        setEvaluationJobStatus('pending');
+        setEvaluationProgress(0.1); // Show initial progress
+        
+        // Start polling for job status
+        const pollInterval = setInterval(async () => {
+          try {
+            const statusResponse = await axios.get(`/api/job-status/${jobId}`);
+            const jobStatus = statusResponse.data;
+            
+            // Update state with new values
+            const newStatus = jobStatus.status;
+            const newProgress = jobStatus.progress || 0;
+            
+            setEvaluationJobStatus(newStatus);
+            setEvaluationProgress(newProgress);
+            
+            if (jobStatus.status === 'completed') {
+              setEvaluationResults(jobStatus.result);
+              setEvaluationLoading(false);
+              clearInterval(pollInterval);
+              setEvaluationPollingInterval(null);
+            } else if (jobStatus.status === 'failed') {
+              setEvaluationResults({ error: jobStatus.error || 'Job failed' });
+              setEvaluationLoading(false);
+              clearInterval(pollInterval);
+              setEvaluationPollingInterval(null);
+            }
+          } catch (pollError) {
+            setEvaluationResults({ error: 'Failed to check job status' });
+            setEvaluationLoading(false);
+            clearInterval(pollInterval);
+            setEvaluationPollingInterval(null);
+          }
+        }, 2000); // Poll every 2 seconds
+        
+        setEvaluationPollingInterval(pollInterval);
+        
+      } else {
+        // Use synchronous pattern (original behavior)
+        const response = await axios.post('/api/evaluate-prompt', {
+          baseline_prompt: baselinePrompt,
+          new_prompt: newPrompt,
+          customer_data: customerData || {}
+        });
+        
+        setEvaluationResults(response.data);
+        setEvaluationLoading(false);
+      }
     } catch (err) {
-      console.error("Error evaluating prompt:", err);
       setEvaluationResults({ error: err.response?.data?.detail || "Failed to evaluate prompt" });
-    } finally {
       setEvaluationLoading(false);
+    }
+  };
+
+  // Cleanup polling interval on component unmount
+  useEffect(() => {
+    return () => {
+      if (evaluationPollingInterval) {
+        clearInterval(evaluationPollingInterval);
+      }
+      if (assessmentPollingInterval) {
+        clearInterval(assessmentPollingInterval);
+      }
+    };
+  }, [evaluationPollingInterval, assessmentPollingInterval]);
+
+
+
+
+
+
+
+  // Function to get job status display text
+  const getJobStatusText = () => {
+    if (!evaluationJobStatus) {
+      return '🔄 Submitting job...';
+    }
+    
+    switch (evaluationJobStatus) {
+      case 'pending':
+        return '🔄 Job submitted, waiting to start...';
+      case 'running':
+        return `🔄 Processing evaluation... (${Math.round(evaluationProgress * 100)}%)`;
+      case 'completed':
+        return '✅ Evaluation completed!';
+      case 'failed':
+        return '❌ Job failed';
+      default:
+        return '🔄 Processing...';
+    }
+  };
+
+  // Function to get test prompt status display text
+  const getTestPromptStatusText = () => {
+    if (!testPromptJobStatus) {
+      return '🔄 Submitting test job...';
+    }
+    
+    switch (testPromptJobStatus) {
+      case 'pending':
+        return '🔄 Test job submitted, waiting to start...';
+      case 'running':
+        return `🔄 Testing prompt... (${Math.round(testPromptProgress * 100)}%)`;
+      case 'completed':
+        return '✅ Test completed!';
+      case 'failed':
+        return '❌ Test failed';
+      default:
+        return '🔄 Testing...';
+    }
+  };
+
+  // Function to get progress color
+  const getProgressColor = () => {
+    if (evaluationJobStatus === 'failed') return '#E81E23';
+    if (evaluationJobStatus === 'completed') return '#28a745';
+    return '#F36F21'; // GSK orange
+  };
+
+  const getAssessmentStatusText = () => {
+    if (!assessmentJobStatus) {
+      return '🔄 Submitting assessment job...';
+    }
+    
+    switch (assessmentJobStatus) {
+      case 'pending':
+        return '🔄 Assessment job submitted, waiting to start...';
+      case 'running':
+        return `🔄 Running quality assessment... (${Math.round(assessmentProgress * 100)}%)`;
+      case 'completed':
+        return '✅ Assessment completed successfully!';
+      case 'failed':
+        return '❌ Assessment failed';
+      default:
+        return '🔄 Processing assessment...';
     }
   };
 
@@ -967,6 +1179,82 @@ If the user provides a specific instruction, you must follow only follow those i
     );
   };
 
+  // Test prompt job handling
+  const handleTestPrompt = async (prompt, customerData = null) => {
+    try {
+      // Clear previous results
+      setTestPromptResults(null);
+      setTestPromptJobId(null);
+      setTestPromptJobStatus(null);
+      setTestPromptProgress(0);
+      setTestPromptLoading(true);
+
+      if (testPromptPollingInterval) {
+        clearInterval(testPromptPollingInterval);
+        setTestPromptPollingInterval(null);
+      }
+
+      // Submit test prompt job
+      const response = await axios.post('/api/test-prompt-job', {
+        prompt: prompt,
+        customer_data: customerData || {}
+      });
+      
+      const jobId = response.data.job_id;
+      
+      setTestPromptJobId(jobId);
+      setTestPromptJobStatus('pending');
+      setTestPromptProgress(0.1);
+      
+      // Start polling for job status
+      const pollInterval = setInterval(async () => {
+        try {
+          const statusResponse = await axios.get(`/api/job-status/${jobId}`);
+          const jobStatus = statusResponse.data;
+          
+          // Update state with new values
+          const newStatus = jobStatus.status;
+          const newProgress = jobStatus.progress || 0;
+          
+          setTestPromptJobStatus(newStatus);
+          setTestPromptProgress(newProgress);
+          
+          if (jobStatus.status === 'completed') {
+            setTestPromptResults(jobStatus.result);
+            setTestPromptLoading(false);
+            clearInterval(pollInterval);
+            setTestPromptPollingInterval(null);
+          } else if (jobStatus.status === 'failed') {
+            setTestPromptResults({ error: jobStatus.error || 'Test job failed' });
+            setTestPromptLoading(false);
+            clearInterval(pollInterval);
+            setTestPromptPollingInterval(null);
+          }
+        } catch (pollError) {
+          setTestPromptResults({ error: 'Failed to check test job status' });
+          setTestPromptLoading(false);
+          clearInterval(pollInterval);
+          setTestPromptPollingInterval(null);
+        }
+      }, 2000); // Poll every 2 seconds
+      
+      setTestPromptPollingInterval(pollInterval);
+      
+    } catch (err) {
+      setTestPromptResults({ error: err.response?.data?.detail || "Failed to submit test prompt job" });
+      setTestPromptLoading(false);
+    }
+  };
+
+  // Cleanup test prompt polling interval on component unmount
+  useEffect(() => {
+    return () => {
+      if (testPromptPollingInterval) {
+        clearInterval(testPromptPollingInterval);
+      }
+    };
+  }, [testPromptPollingInterval]);
+
   return (
     <div className="App">
       <header className="App-header">
@@ -1306,7 +1594,7 @@ If the user provides a specific instruction, you must follow only follow those i
                         onClick={handleRunAssessment}
                         disabled={assessmentLoading}
                       >
-                        {assessmentLoading ? 'Running Assessment...' : 'Run Assessment'}
+                        {assessmentLoading ? getAssessmentStatusText() : 'Run Assessment'}
                       </button>
                     </div>
                   </div>
@@ -1352,6 +1640,27 @@ If the user provides a specific instruction, you must follow only follow those i
                     ))}
                   </div>
                 </div>
+
+                {/* Assessment Progress Bar */}
+                {assessmentLoading && (
+                  <div className="job-progress-container" style={{ marginTop: '1rem' }}>
+                    <div className="job-progress-bar">
+                      <div 
+                        className="job-progress-fill"
+                        style={{ 
+                          width: `${Math.max(assessmentProgress, 0.05) * 100}%`,
+                          backgroundColor: assessmentJobStatus === 'failed' ? '#E81E23' : assessmentJobStatus === 'completed' ? '#28a745' : '#F36F21'
+                        }}
+                      ></div>
+                    </div>
+                    <div className="job-progress-text">
+                      {getAssessmentStatusText()}
+                      {assessmentJobId && (
+                        <span className="job-id">Assessment Job ID: {assessmentJobId}</span>
+                      )}
+                    </div>
+                  </div>
+                )}
 
                 {assessmentError && (
                   <div className="assessment-error">
@@ -1505,13 +1814,61 @@ If the user provides a specific instruction, you must follow only follow those i
                   
                   {/* Evaluation Button */}
                   <div className="evaluation-section">
+                    {/* Job Pattern Toggle */}
+                    <div className="job-pattern-toggle">
+                      <label className="toggle-label">
+                        <input
+                          type="checkbox"
+                          checked={useJobPattern}
+                          onChange={(e) => setUseJobPattern(e.target.checked)}
+                          className="toggle-input"
+                        />
+                        <span className="toggle-slider"></span>
+                        <span className="toggle-text">
+                          {useJobPattern ? '🔄 Job Pattern (Recommended)' : '⚡ Synchronous Mode'}
+                        </span>
+                      </label>
+                      <div className="toggle-description">
+                        {useJobPattern 
+                          ? 'Uses async job processing to avoid timeouts. Shows real-time progress.'
+                          : 'Uses traditional synchronous processing. May timeout for long evaluations.'
+                        }
+                      </div>
+                    </div>
+
+                    {/* Progress Bar for Job Pattern */}
+                    {useJobPattern && evaluationLoading && (
+                      <div className="job-progress-container">
+                        <div className="job-progress-bar">
+                          <div 
+                            className="job-progress-fill"
+                            style={{ 
+                              width: `${Math.max(evaluationProgress, 0.05) * 100}%`,
+                              backgroundColor: getProgressColor()
+                            }}
+                          ></div>
+                        </div>
+                        <div className="job-progress-text">
+                          {getJobStatusText()}
+                          {evaluationJobId && (
+                            <span className="job-id">Job ID: {evaluationJobId}</span>
+                          )}
+                        </div>
+
+                      </div>
+                    )}
+
+
+
                     <button 
                       className="evaluate-prompt-btn"
                       onClick={handleEvaluateNewPrompt}
                       disabled={evaluationLoading}
                     >
-                      {evaluationLoading ? '🔄 Evaluating new prompt (this may take a minute)...' : '► Evaluate New Prompt'}
+                      {evaluationLoading ? getJobStatusText() : '► Evaluate New Prompt'}
                     </button>
+                    
+
                   </div>
                   
                   {/* Evaluation Results */}
